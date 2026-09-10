@@ -1,0 +1,13 @@
+# 本地凭据
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+
+# 运行数据与临时产物
+*.log
+*.tmp
+_processing-log.txt
+__pycache__/
+.DS_Store

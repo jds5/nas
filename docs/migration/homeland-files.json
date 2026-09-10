@@ -1,0 +1,87 @@
+{
+  "date": "2026-09-10",
+  "source_commit": "298904133b47fbae0a8be1e0cf922888ce377cf5",
+  "method": "copy; source unchanged; Markdown links and migration notes adjusted",
+  "files": [
+    {
+      "source": "docs/家庭NAS网络安全架构.md",
+      "destination": "docs/architecture/家庭NAS网络安全架构.md",
+      "source_sha256": "fd308ed276df487f241363c2d0c0ae06cd9987b6a4297a61633d58e30629b20a"
+    },
+    {
+      "source": "docs/本地Docker与NPM部署记录.md",
+      "destination": "docs/operations/本地Docker与NPM部署记录.md",
+      "source_sha256": "9b7bad11c95fc5671b923a64f72771e5f88cc64a7a30694df511b8c3742c6b14"
+    },
+    {
+      "source": "docs/Cloudflare入口与优选IP实验记录.md",
+      "destination": "docs/archive/network/Cloudflare入口与优选IP实验记录.md",
+      "source_sha256": "db3fd4fd99645e64fe853139390eef8f0efe22249b804b963f402dd39e5ff7d8"
+    },
+    {
+      "source": "docs/家庭NAS实验项目隔离沙箱与共享方案.md",
+      "destination": "docs/archive/network/家庭NAS实验项目隔离沙箱与共享方案.md",
+      "source_sha256": "85f30d412c7fe0fe96fc01e4c90903eacaebc838763fd697bc6bb49ea160fb52"
+    },
+    {
+      "source": "CLOUDFLARE_ACCESS_IMPLEMENTATION.md",
+      "destination": "docs/security/CLOUDFLARE_ACCESS_IMPLEMENTATION.md",
+      "source_sha256": "f5da76826db1bcbea325127e54869d0ba559a345d3ebbcb749d61a46526e7f19"
+    },
+    {
+      "source": "AGENTS.access-auth.md",
+      "destination": "docs/security/AGENTS.access-auth.md",
+      "source_sha256": "86a95f59164bf95d1bf7ada97d7c580c3cdc6afee36fd5c43fcf93250ab4e5cf"
+    },
+    {
+      "source": "tools/pack-tachiyomi-to-cbz.ps1",
+      "destination": "scripts/media/pack-tachiyomi-to-cbz.ps1",
+      "source_sha256": "0282cb0455ef5db65eb8f0fadff4ce61e7046cb4199f52ed9e69c94ddc9c08a8"
+    },
+    {
+      "source": "docs/nas运维/备份盘休眠监控.md",
+      "destination": "docs/operations/备份盘休眠监控.md",
+      "source_sha256": "15f8d4d75b095388f426834a03a71bb7a56be5e8ecc8d114556e1e8d95a28c70"
+    },
+    {
+      "source": "docs/nas运维/运维记录.md",
+      "destination": "docs/operations/运维记录.md",
+      "source_sha256": "c494ed7aece923b3f9a56955242512b5b4c1c797af7e35581bcf2bae6843c65c"
+    },
+    {
+      "source": "docs/nas运维/备份盘休眠配置.md",
+      "destination": "docs/operations/备份盘休眠配置.md",
+      "source_sha256": "7e78f559c5aff76f7aae12c27d0d89c91884d5cc5dd6268e497824813bb398ad"
+    },
+    {
+      "source": "docs/archive-个人设备NAS/NAS网络架构设计.md",
+      "destination": "docs/archive/setup/NAS网络架构设计.md",
+      "source_sha256": "182469e9c77275afd07b04880d19dfc739e743cd4d2d809c006f3efb205a0ce5"
+    },
+    {
+      "source": "docs/archive-个人设备NAS/NAS搭建进度.md",
+      "destination": "docs/archive/setup/NAS搭建进度.md",
+      "source_sha256": "1029b9cd59d18e48a1707796b6c76216f6456188cf3a8517719dc417a218b30f"
+    },
+    {
+      "source": "docs/archive-个人设备NAS/NAS装机TODO.md",
+      "destination": "docs/archive/setup/NAS装机TODO.md",
+      "source_sha256": "8f86628e97b65ad62e5b8f13e3860a6d5161154a308c9641cf3a515eaf0ca6d9"
+    },
+    {
+      "source": "docs/archive-个人设备NAS/光猫超密破解调研.md",
+      "destination": "docs/archive/setup/光猫超密破解调研.md",
+      "source_sha256": "e1cbe6a47d4f06845777adf0f88ddd45a2dc7b84fdd15d455e0c0d3d138552e2"
+    },
+    {
+      "source": "references/F盘清单-marvel-TV.csv",
+      "destination": "references/media/F盘清单-marvel-TV.csv",
+      "source_sha256": "912387464da45d3d0e2cfe5b796bff3237fd2fa4e9ebb2407dbe4d9c1ce366de"
+    },
+    {
+      "source": "references/F盘清单-animate.csv",
+      "destination": "references/media/F盘清单-animate.csv",
+      "source_sha256": "c78bef4e3fe94e14e7ae86adb32a9d6691fcf9876ccb2045b0e1988d1219ad70"
+    }
+  ]
+}
