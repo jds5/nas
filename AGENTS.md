@@ -5,11 +5,11 @@
 ## 资料组织
 
 - 开始维护前阅读 `README.md` 和相关运维记录；网络与公网入口决策以 `docs/architecture/家庭NAS网络安全架构.md` 为准。
-- `docs/operations/` 保存带日期的操作与验证记录，`docs/security/` 保存安全实施手册，`docs/archive/` 仅用于历史追溯。
-- 历史文档中的“已完成”不等于当前现场状态；变更前核对设备身份、配置和依赖，不直接执行归档中的命令。
+- `docs/operations/` 保存带日期的操作与验证记录，`docs/security/` 保存安全实施手册；过时方案通过 Git 历史追溯，不重复归档。
+- 历史文档中的“已完成”不等于当前现场状态；变更前核对设备身份、配置和依赖，不直接执行历史版本中的命令。
 - 新增资料按用途归类并更新 README 导航；移动文件时同步修复相对链接。
 - 来源与未迁移内容见 `docs/migration/README.md`。Homeland 应用代码仍归原项目，生产配置仍需从 NAS / nas-config 核对，不用历史代码片段冒充可部署配置。
-- 实施“公开读、登录写”的实验 Web 项目时，阅读 `docs/security/CLOUDFLARE_ACCESS_IMPLEMENTATION.md` 及 `AGENTS.access-auth.md`，按其中适用范围执行鉴权与验收。
+- 实施“公开读、登录写”的实验 Web 项目时，阅读统一手册 `docs/security/CLOUDFLARE_ACCESS_IMPLEMENTATION.md`，按其中适用范围执行鉴权与验收，不另建重复规则文档。
 
 ## 工作方式
 
