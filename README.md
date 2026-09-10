@@ -9,6 +9,7 @@
 | [网络安全架构](docs/architecture/家庭NAS网络安全架构.md) | 入口、网络边界、远程维护与待验收事项 |
 | [设备与运维记录](docs/operations/运维记录.md) | 硬件、存储、备份链、NPM/应用修复与版本记录 |
 | [备份盘休眠](docs/operations/备份盘休眠.md) | 磁盘身份、自纠正 cron、监控与待核验效果 |
+| [手机接入现有 tmux 规划](docs/operations/手机接入现有tmux规划.md) | 当前会话定位、手机接入步骤与远控界面选项 |
 | [Access 实施手册](docs/security/CLOUDFLARE_ACCESS_IMPLEMENTATION.md) | 公开读、登录写的统一鉴权约束和测试矩阵 |
 | [媒体整理工具](scripts/media/README.md) | Tachiyomi → CBZ 脚本、用法与限制 |
 | [迁移与清理记录](docs/migration/README.md) | 来源、合并删减范围及历史找回方法 |
