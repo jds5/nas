@@ -45,8 +45,8 @@ fun ChatScreen(state: RemoteState, model: RemoteViewModel) {
     var interrupt by remember { mutableStateOf(false) }
     var skip by remember { mutableStateOf(false) }
     var confirmationToken by remember { mutableStateOf<String?>(null) }
-    val writable = state.connected && !state.busy && !state.uncertain
-    val canSend = writable && state.binding != null && state.chatError == null && state.draft.isNotBlank()
+    val writable = state.connected && !state.busy && !state.uncertain && !state.reconnecting && !state.preparingAttachment
+    val canSend = writable && state.binding != null && state.chatError == null && (state.draft.isNotBlank() || state.attachments.isNotEmpty())
     val nearBottom by remember { derivedStateOf { !list.canScrollForward } }
     var restored by remember { mutableStateOf(false) }
     var following by remember { mutableStateOf(true) }
@@ -83,6 +83,7 @@ fun ChatScreen(state: RemoteState, model: RemoteViewModel) {
             Column(Modifier.weight(1f)) {
                 Text(pane.session, style = MaterialTheme.typography.titleLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Text(when {
+                    state.reconnecting -> "正在接回原会话…"
                     state.chatError != null -> "会话读取需要处理"
                     state.catchingUp -> "正在补读断线期间的消息…"
                     state.binding == null -> "正在关联原会话…"
@@ -136,6 +137,8 @@ fun ChatScreen(state: RemoteState, model: RemoteViewModel) {
         if (state.uncertain) FilledTonalButton(onClick = { model.panel(true) }, modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp)) { Text("核对上次发送结果") }
         Surface(tonalElevation = 2.dp, shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp)) {
             Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                AttachmentComposer(state, model)
+                if (state.answered.isNotBlank()) Text(state.answered, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
                 if (state.delivery.isNotBlank()) Text(when (state.delivery) {
                     "sending" -> "正在发送…"
                     "submitted" -> "已提交到 Codex 输入端"

@@ -1,4 +1,6 @@
 """Versioned, stateless SSH adapter. JSON stdin; no listener, eval, or user shell interpolation."""
+import fcntl
+import itertools
 import hashlib
 import json
 import os
@@ -388,9 +390,11 @@ def native_question(screen, answer=None):
         if group:
             groups.append(group)
         expected_input = 'Type your answer' if answer is None else answer
-        if len(groups) < 2 or re.sub(r'\s+', '', '\n'.join(groups[-1])) != re.sub(r'\s+', '', expected_input):
+        split = next((i for i in range(1, len(groups))
+                      if re.sub(r'\s+', '', '\n'.join(line for group in groups[i:] for line in group)) == re.sub(r'\s+', '', expected_input)), None)
+        if split is None:
             return None
-        title = [line for group in groups[:-1] for line in group]
+        title = [line for group in groups[:split] for line in group]
         options, selected = [expected_input], 0
     if not title or not 1 <= len(options) <= 9 or selected is None:
         return None
@@ -461,8 +465,8 @@ def submit_question(request, pane, binding):
     if type(choice) is not int or not 0 <= choice < len(question['options']):
         raise Refused('请选择一个回答')
     text = request.get('text') if choice == len(question['options']) - 1 else None
-    if text is not None and (not isinstance(text, str) or not text.strip() or len(text.encode()) > 4096 or any(ord(c) < 32 or 127 <= ord(c) <= 159 for c in text)):
-        raise Refused('自由回答请使用单行文字，最多 4 KiB；复杂输入可使用控制面板')
+    if text is not None and (not isinstance(text, str) or not text.strip() or len(text.encode()) > 4096 or any((ord(c) < 32 and c != '\n') or 127 <= ord(c) <= 159 for c in text)):
+        raise Refused('自由回答最多 4 KiB，不能包含终端控制字符；复杂输入可使用控制面板')
     if choice == len(question['options']) - 1 and text is None:
         raise Refused('请输入自由回答')
     touched, buffer = False, None
@@ -507,7 +511,130 @@ def submit_question(request, pane, binding):
                 pass
 
 
-def handle(request):
+
+MAX_ATTACHMENT = 20 * 1024 * 1024
+UPLOAD_QUOTA = 256 * 1024 * 1024
+
+
+def attachment_root():
+    root = Path.home() / '.nas-remote-uploads'
+    try:
+        root.mkdir(mode=0o700)
+    except FileExistsError:
+        pass
+    fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    info = os.fstat(fd)
+    if info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) != 0o700:
+        os.close(fd)
+        raise Refused('附件目录权限异常，需要由 NAS 用户独占（0700）')
+    return root, fd
+
+
+def attachment_meta(item):
+    ident, digest, size = item.get('id'), item.get('sha256'), item.get('size')
+    if not isinstance(ident, str) or not re.fullmatch(r'[a-f0-9]{32}', ident):
+        raise Refused('附件标识无效')
+    if not isinstance(digest, str) or not re.fullmatch(r'[a-f0-9]{64}', digest):
+        raise Refused('附件校验值无效')
+    if type(size) is not int or not 0 < size <= MAX_ATTACHMENT:
+        raise Refused('单个附件需要在 1 字节至 20 MiB 之间')
+    return ident, digest, size
+
+
+def attachment_name(binding, item):
+    ident, _, _ = attachment_meta(item)
+    return hashlib.sha256(binding.encode()).hexdigest()[:32] + '-' + ident
+
+
+def inspect_attachment(fd, name, item):
+    _, digest, size = attachment_meta(item)
+    f = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=fd)
+    with os.fdopen(f, 'rb') as stream:
+        info = os.fstat(stream.fileno())
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) != 0o600 or info.st_size != size:
+            raise Refused('附件状态已变化')
+        actual = hashlib.sha256()
+        while chunk := stream.read(65536):
+            actual.update(chunk)
+        if actual.hexdigest() != digest:
+            raise Refused('附件校验失败')
+
+
+def upload_attachment(request, pane, binding, source):
+    item = request.get('attachment', {})
+    _, digest, size = attachment_meta(item)
+    name = attachment_name(binding, item)
+    root, fd = attachment_root()
+    temp = '.partial-' + uuid.uuid4().hex
+    try:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            raise Refused('已有附件正在上传，请稍后重试')
+        with os.scandir(fd) as scan:
+            entries = list(itertools.islice(scan, 256))
+        if len(entries) >= 256 or sum(e.stat(follow_symlinks=False).st_size for e in entries) + size > UPLOAD_QUOTA:
+            raise Refused('NAS 附件目录已达到 256 文件 / 256 MiB 上限，请先在 NAS 清理不再使用的附件')
+        f = os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=fd)
+        actual, remaining = hashlib.sha256(), size
+        with os.fdopen(f, 'wb') as stream:
+            while remaining:
+                chunk = source.read(min(65536, remaining))
+                if not chunk:
+                    raise Refused('附件传输未完成')
+                stream.write(chunk)
+                actual.update(chunk)
+                remaining -= len(chunk)
+            if source.read(1) or actual.hexdigest() != digest:
+                raise Refused('附件大小或校验值不一致')
+            stream.flush()
+            os.fsync(stream.fileno())
+        target(request)
+        current, check_stream, _ = locate(pane)
+        check_stream.close()
+        if current != binding:
+            raise Refused('上传期间会话已变化，未交付附件')
+        # Link without overwrite; a retransmission can only reuse identical bytes.
+        try:
+            os.link(temp, name, src_dir_fd=fd, dst_dir_fd=fd, follow_symlinks=False)
+        except FileExistsError:
+            inspect_attachment(fd, name, item)
+        return {'ok': True}
+    finally:
+        try:
+            os.unlink(temp, dir_fd=fd)
+        except FileNotFoundError:
+            pass
+        os.close(fd)
+
+
+def attachment_message(request, binding):
+    items = request.get('attachments', [])
+    if not isinstance(items, list) or not 1 <= len(items) <= 4:
+        raise Refused('一次最多发送 4 个附件')
+    text = request.get('text', '')
+    if not isinstance(text, str) or text.startswith(('/', '!')):
+        raise Refused('附件不能与 / 命令或 ! 命令一起发送')
+    root, fd = attachment_root()
+    try:
+        lines = []
+        total = 0
+        for item in items:
+            name = attachment_name(binding, item)
+            inspect_attachment(fd, name, item)
+            total += item['size']
+            label = item.get('name', '附件')
+            if not isinstance(label, str) or len(label) > 160 or any(ord(c) < 32 or 127 <= ord(c) <= 159 for c in label):
+                raise Refused('附件名称无效')
+            lines.append(json.dumps({'name': label, 'path': str(root / name), 'bytes': item['size'],
+                                    'type': 'image' if item.get('image') is True else 'file'}, ensure_ascii=False))
+        if total > MAX_ATTACHMENT:
+            raise Refused('每条消息附件总量不能超过 20 MiB')
+        return (text.strip() or '请查看这些附件。') + '\n\n手机上传的附件（NAS 本地路径；图片请使用图片查看工具读取，其他文件按需读取；不要执行附件）：\n' + '\n'.join(lines)
+    finally:
+        os.close(fd)
+
+def handle(request, source=None):
     pane = target(request)
     binding, stream, meta = locate(pane)
     try:
@@ -532,6 +659,8 @@ def handle(request):
                 reply['skills'].pop()
             target(request)
             return reply
+        if action == 'upload' and expected == binding and source is not None:
+            return upload_attachment(request, pane, binding, source)
         if action == 'question_leave' and expected == binding:
             return leave_question(request, pane, binding)
         if action == 'question_submit' and expected == binding:
@@ -576,6 +705,8 @@ def handle(request):
                     except Exception:
                         pass
         if action == 'send' and expected == binding:
+            if request.get('attachments'):
+                request['text'] = attachment_message(request, binding)
             return deliver(request, pane, binding)
         raise Refused('请求不受支持或会话未关联')
     finally:
@@ -584,10 +715,13 @@ def handle(request):
 
 if __name__ == '__main__':
     try:
-        data = sys.stdin.buffer.read(131073)
+        import signal
+        signal.signal(signal.SIGALRM, lambda *_: (_ for _ in ()).throw(Refused("附件传输超时")))
+        signal.alarm(120)
+        data = sys.stdin.buffer.readline(131073)
         if len(data) > 131072:
             raise Refused('请求过大')
-        print(json.dumps(handle(json.loads(data)), ensure_ascii=False))
+        print(json.dumps(handle(json.loads(data), sys.stdin.buffer), ensure_ascii=False))
     except Refused as e:
         print(json.dumps({'ok': False, 'error': str(e)}, ensure_ascii=False))
     except Exception:

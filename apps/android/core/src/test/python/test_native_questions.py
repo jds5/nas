@@ -71,7 +71,7 @@ class NativeQuestionTests(unittest.TestCase):
             if name==fail: raise b.Refused('transport lost')
             if name=='capture-pane': return screen(state['selected'],state['title'],state['answer'])
             if name=='load-buffer': state['buffer']=kwargs['data']
-            if name=='paste-buffer': state['answer']=state['buffer'].decode()
+            if name=='paste-buffer': state['answer']=state['buffer'].decode().replace('\n', '\n       ')
             if name=='send-keys':
                 if args[-1]=='Down': state['selected']+=1
                 if args[-1]=='Up': state['selected']-=1
@@ -96,13 +96,26 @@ class NativeQuestionTests(unittest.TestCase):
         self.assertEqual([k['data'] for _,k in calls if 'data' in k],[text.encode()])
         self.assertFalse(any(text in a for a,_ in calls))
 
+    def test_multiline_other_preserves_payload_and_submits_once(self):
+        text='图片清晰\n\n文件可靠'
+        result,calls=self.submit(2,text)
+        self.assertTrue(result['submitted'])
+        self.assertEqual([k['data'] for _,k in calls if 'data' in k],[text.encode()])
+        self.assertEqual(sum(a[-1]=='Enter' for a,_ in calls),1)
+
+    def test_free_text_blank_paragraphs_keep_question_identity(self):
+        blank='• Queued follow-up inputs\n\n  请说明需求\n\n  Type your answer\n\n  enter submit   ctrl + ] skip   alt + ↓ main prompt'
+        text='图片清晰\n\n文件可靠'
+        filled=blank.replace('Type your answer', '图片清晰\n\n  文件可靠')
+        self.assertEqual(b.native_question(blank)['id'], b.native_question(filled,text)['id'])
+
     def test_changed_question_never_gets_enter(self):
         result,calls=self.submit(1,mutate=True)
         self.assertTrue(result['uncertain'])
         self.assertFalse(any(a[-1]=='Enter' for a,_ in calls))
 
     def test_invalid_answer_rejected_before_touch(self):
-        for text in [' ', '\x1b[31m', 'a\nb', '中'*1500]:
+        for text in [' ', '\x1b[31m', 'a\tb', '中'*1500]:
             with self.assertRaises(b.Refused): self.submit(2,text)
         with self.assertRaises(b.Refused): self.submit(True)
         with self.assertRaises(b.Refused): self.submit(3)

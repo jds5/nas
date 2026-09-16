@@ -26,9 +26,11 @@ import org.rokano.nasremote.core.messageBlocks
 fun Message(message: ChatItem, modifier: Modifier = Modifier) {
     val user = message.role == "user"
     var expanded by remember(message.id) { mutableStateOf(false) }
-    val long = message.text.length > 1600 || message.text.count { it == '\n' } > 32
-    val visible = if (long && !expanded) message.text.take(1200).lines().take(24).joinToString("\n") else message.text
-    val blocks = remember(visible, expanded) { if (long && !expanded) listOf(MessageBlock.Text(visible + "…")) else messageBlocks(visible) }
+    val attachmentBody = remember(message.id, message.text) { if (user) attachmentPresentation(message.text) else null }
+    val body = attachmentBody?.first ?: message.text
+    val long = body.length > 1600 || body.count { it == '\n' } > 32
+    val visible = if (long && !expanded) body.take(1200).lines().take(24).joinToString("\n") else body
+    val blocks = remember(visible, expanded) { messageBlocks(visible) }
     val clipboard = LocalClipboardManager.current
     Column(modifier.fillMaxWidth(), horizontalAlignment = if (user) Alignment.End else Alignment.Start) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -47,25 +49,19 @@ fun Message(message: ChatItem, modifier: Modifier = Modifier) {
                                 Column(Modifier.padding(12.dp)) {
                                     Row(verticalAlignment = Alignment.CenterVertically) {
                                         Text(block.language.ifBlank { "代码" }, Modifier.weight(1f), style = MaterialTheme.typography.labelSmall)
-                                        TextButton(onClick = { clipboard.setText(AnnotatedString(block.value)) }) { Text("复制代码") }
+                                        TextButton(onClick = { if (long && !expanded) expanded = true else clipboard.setText(AnnotatedString(block.value)) }) { Text(if (long && !expanded) "展开后复制" else "复制代码") }
                                     }
                                     Text(block.value, fontFamily = FontFamily.Monospace, softWrap = false,
                                         style = MaterialTheme.typography.bodyMedium, modifier = Modifier.horizontalScroll(rememberScrollState()))
                                 }
                             }
-                            is MessageBlock.Table -> Column(Modifier.horizontalScroll(rememberScrollState())) {
-                                block.rows.forEachIndexed { rowIndex, row ->
-                                    Row {
-                                        repeat(block.rows.maxOf { it.size }) { column ->
-                                            Text(readableMarkdown(row.getOrElse(column) { "" }), Modifier.width(168.dp).padding(8.dp),
-                                                fontWeight = if (rowIndex == 0) FontWeight.Bold else FontWeight.Normal,
-                                                style = MaterialTheme.typography.bodyMedium)
-                                        }
-                                    }
-                                    HorizontalDivider()
-                                }
-                            }
+                            is MessageBlock.Table -> MarkdownTable(block)
                         } }
+                    }
+                }
+                attachmentBody?.second?.forEach { label ->
+                    Surface(color = MaterialTheme.colorScheme.surfaceContainerHighest, shape = RoundedCornerShape(12.dp)) {
+                        Text(label, Modifier.fillMaxWidth().padding(12.dp), style = MaterialTheme.typography.bodyMedium)
                     }
                 }
                 if (long) TextButton(onClick = { expanded = !expanded }) { Text(if (expanded) "收起" else "展开完整内容") }
@@ -74,7 +70,7 @@ fun Message(message: ChatItem, modifier: Modifier = Modifier) {
     }
 }
 
-private fun readableMarkdown(source: String) = buildAnnotatedString {
+internal fun readableMarkdown(source: String) = buildAnnotatedString {
     val heading = Regex("^#{1,6} +").find(source)
     val body = (if (heading != null) source.drop(heading.value.length) else source).replace(Regex("^([ ]*)[-*] +"), "$1• ")
     withStyle(SpanStyle(fontWeight = if (heading != null) FontWeight.SemiBold else FontWeight.Normal)) {
@@ -87,4 +83,23 @@ private fun readableMarkdown(source: String) = buildAnnotatedString {
         }
         append(body.substring(position))
     }
+}
+
+/** Display-only metadata: no remote file or URL is opened from a message. */
+private fun attachmentPresentation(source: String): Pair<String, List<String>>? {
+    val marker = "\n\n手机上传的附件（NAS 本地路径；图片请使用图片查看工具读取，其他文件按需读取；不要执行附件）：\n"
+    val split = source.lastIndexOf(marker)
+    if (split < 0) return null
+    val rows = source.substring(split + marker.length).lines()
+    if (rows.size !in 1..4) return null
+    return try {
+        val labels = rows.map {
+            val item = org.json.JSONObject(it)
+            val name = org.rokano.nasremote.core.TerminalText.clean(item.getString("name")).replace('\n', ' ')
+            val bytes = item.getLong("bytes")
+            require(name.length <= 160 && bytes in 1..20L * 1024 * 1024)
+            "${if (item.optString("type") == "image") "图片" else "文件"} · $name\n${(bytes + 1023) / 1024} KiB · 已提交"
+        }
+        source.take(split) to labels
+    } catch (_: Exception) { null }
 }

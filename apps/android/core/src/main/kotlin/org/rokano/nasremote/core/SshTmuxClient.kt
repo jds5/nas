@@ -40,13 +40,25 @@ class SshTmuxClient : AutoCloseable {
     fun connect(profile: ConnectionProfile, key: ByteArray, passphrase: ByteArray) {
         profile.validate()
         close()
-        val pins = PinnedHostKeys(profile.fingerprint)
         val jsch = JSch()
         identity = jsch
+        try { jsch.addIdentity("phone", key, null, passphrase.takeIf { it.isNotEmpty() }) }
+        catch (e: Exception) { close(); throw IllegalStateException(ConnectionFailure.describe(e, ConnectionStage.KEY, false)) }
+        try { open(profile, jsch) } catch (e: Exception) { close(); throw e }
+    }
+
+    /** Foreground-only recovery reuses the unlocked identity, never stores the passphrase. */
+    fun reconnect(profile: ConnectionProfile) {
+        profile.validate()
+        val jsch = identity ?: error("请重新解锁私钥")
+        session?.disconnect()
+        open(profile, jsch)
+    }
+    private fun open(profile: ConnectionProfile, jsch: JSch) {
+        val pins = PinnedHostKeys(profile.fingerprint)
         jsch.setHostKeyRepository(pins)
-        var stage = ConnectionStage.KEY
+        var stage = ConnectionStage.TCP
         try {
-            jsch.addIdentity("phone", key, null, passphrase.takeIf { it.isNotEmpty() })
             val s = jsch.getSession(profile.user, profile.host, profile.port)
             session = s
             s.setSocketFactory(object : SocketFactory {
@@ -70,13 +82,31 @@ class SshTmuxClient : AutoCloseable {
             s.timeout = 15_000
             s.connect(15_000)
         } catch (e: Exception) {
-            close()
+            session?.disconnect()
+            session = null
             throw IllegalStateException(ConnectionFailure.describe(e, if (pins.verified) ConnectionStage.AUTH else stage, pins.rejected))
         }
     }
 
     /** Fixed bundled program; request data is carried only on stdin. No NAS installation. */
-    fun bridge(request: String): String = exec(bridgeCommand, request.toByteArray(Charsets.UTF_8))
+    fun bridge(request: String): String = exec(bridgeCommand, (request + "\n").toByteArray(Charsets.UTF_8))
+
+    fun upload(request: String, file: java.io.File, progress: (Long) -> Unit): String {
+        require(file.length() in 1..20L * 1024 * 1024)
+        file.inputStream().use { source ->
+            val counted = object : java.io.FilterInputStream(source) {
+                var sent = 0L
+                override fun read(b: ByteArray, off: Int, len: Int): Int {
+                    val n = super.read(b, off, len)
+                    if (n > 0) { sent += n; progress(sent) }
+                    return n
+                }
+            }
+            java.io.SequenceInputStream(ByteArrayInputStream((request + "\n").toByteArray()), counted).use {
+                return execStream(bridgeCommand, it, 125_000)
+            }
+        }
+    }
 
     private val bridgeCommand: String by lazy {
         val script = requireNotNull(javaClass.getResourceAsStream("/nas_remote_bridge.py")).bufferedReader().use { it.readText() }
@@ -93,15 +123,18 @@ class SshTmuxClient : AutoCloseable {
     fun key(pane: Pane, key: RemoteKey) { exec(TmuxProtocol.key(pane, key)) }
 
     private fun exec(command: String, input: ByteArray = byteArrayOf()): String {
+        return execStream(command, ByteArrayInputStream(input), 10_000)
+    }
+    private fun execStream(command: String, input: java.io.InputStream, timeoutMs: Long): String {
         val s = session?.takeIf { it.isConnected } ?: error("连接已断开")
         val channel = s.openChannel("exec") as ChannelExec
         try {
             channel.setCommand(command)
-            channel.setInputStream(ByteArrayInputStream(input))
+            channel.setInputStream(input)
             val output = channel.inputStream
             val errors = channel.errStream
             channel.connect(10_000)
-            val deadline = System.nanoTime() + 10_000_000_000L
+            val deadline = System.nanoTime() + timeoutMs * 1_000_000
             val result = ByteArrayOutputStream()
             val buffer = ByteArray(8192)
             var received = 0
@@ -124,6 +157,8 @@ class SshTmuxClient : AutoCloseable {
             return result.toString("UTF-8")
         } finally { channel.disconnect() }
     }
+    fun pause() { session?.disconnect(); session = null }
+
     override fun close() {
         session?.disconnect()
         session = null

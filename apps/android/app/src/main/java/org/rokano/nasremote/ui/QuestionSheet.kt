@@ -20,11 +20,11 @@ import org.rokano.nasremote.RemoteViewModel
 @Composable
 fun QuestionSheet(state: RemoteState, model: RemoteViewModel) {
     if (!state.questionsOpen) return
-    val enabled = state.connected && !state.busy && !state.uncertain && state.screenToken != null && state.chatError == null
+    val enabled = state.connected && !state.busy && !state.uncertain && !state.reconnecting && state.screenToken != null && state.chatError == null
     ModalBottomSheet(onDismissRequest = model::closeQuestions, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
         Column(Modifier.fillMaxWidth().imePadding().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp).padding(bottom = 24.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Text("Codex 的问题", style = MaterialTheme.typography.headlineSmall)
+            Text(if (state.reconnecting) "正在接回原问题…" else "Codex 的问题", style = MaterialTheme.typography.headlineSmall)
             if (state.busy) LinearProgressIndicator(Modifier.fillMaxWidth())
             state.message?.let { Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.primary) }
             AnimatedContent(targetState = state.question, contentKey = { it?.id }, label = "question") { question ->
@@ -55,11 +55,11 @@ fun QuestionSheet(state: RemoteState, model: RemoteViewModel) {
                         }
                         val other = current && choice == question.options.lastIndex
                         if (other) OutlinedTextField(state.answerDraft, model::answerDraft, modifier = Modifier.fillMaxWidth(),
-                            enabled = !state.busy, label = { Text("你的回答") }, placeholder = { Text("输入你自己的想法") }, singleLine = true,
-                            supportingText = { Text("提交后直接发送给 Codex") })
+                            enabled = !state.busy, label = { Text("你的回答") }, placeholder = { Text("输入你自己的想法") }, minLines = 2, maxLines = 6,
+                            supportingText = { Text("支持多行，最多 4 KiB · 提交后直接发送") })
                         Button(onClick = {
                             choice?.let { model.submitAnswer(question, it, state.answerDraft, state.screenToken) }
-                        }, enabled = enabled && current && choice != null && (!other || state.answerDraft.isNotBlank()), modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp)) {
+                        }, enabled = enabled && current && choice != null && (!other || (state.answerDraft.isNotBlank() && state.answerDraft.toByteArray().size <= 4096)), modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp)) {
                             Text(if (state.busy) "正在提交…" else "提交回答")
                         }
                         if (question.count > 1) Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {

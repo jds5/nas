@@ -20,6 +20,11 @@ import org.rokano.nasremote.core.*
 import org.rokano.nasremote.security.*
 import java.security.MessageDigest
 
+data class PendingAttachment(val id: String, val name: String, val size: Long, val sha256: String,
+    val image: Boolean, val file: java.io.File, val binding: String) {
+    fun json() = JSONObject().put("id", id).put("name", name).put("size", size).put("sha256", sha256).put("image", image)
+}
+
 data class ChatItem(val id: String, val role: String, val text: String, val phase: String = "", val offset: Long = 0)
 data class SkillOption(val name: String, val description: String)
 data class Question(val id: String, val title: String, val index: Int, val count: Int,
@@ -62,6 +67,12 @@ data class RemoteState(
     val restoreOffset: Int = 0,
     val seen: String = "",
     val catchingUp: Boolean = false,
+    val reconnecting: Boolean = false,
+    val attachments: List<PendingAttachment> = emptyList(),
+    val attachmentProgress: String = "",
+    val preparingAttachment: Boolean = false,
+    val answered: String = "",
+
 
 )
 
@@ -91,9 +102,16 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
     private var poll: Job? = null
     @Volatile private var epoch = 0
     @Volatile private var foreground = true
+    private var pickerActive = false
+    private var pickerPaused = false
+    private var pickerTimeout: Job? = null
+    private val attachmentDir = java.io.File(application.cacheDir, "attachments")
     private val drafts = mutableMapOf<String, String>()
 
     init {
+        // Temporary copies never survive an application process restart.
+        attachmentDir.listFiles()?.forEach { it.delete() }
+        attachmentDir.mkdirs()
         viewModelScope.launch {
             try {
                 val saved = withContext(Dispatchers.IO) { vault.load() }
@@ -107,6 +125,82 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
                 mutable.update { it.copy(ready = true, message = "无法解锁保存的连接。可清除后重新配置。") }
             }
         }
+    }
+    fun beginAttachmentPicker(): Boolean {
+        val s = state.value
+        if (!s.connected || s.busy || s.reconnecting || s.preparingAttachment || s.binding == null || s.attachments.size >= 4) return false
+        pickerActive = true
+        pickerTimeout?.cancel()
+        pickerTimeout = viewModelScope.launch {
+            delay(120_000)
+            if (pickerActive) { pickerActive = false; disconnect("文件选择已超时，请重新连接。") }
+        }
+        return true
+    }
+    fun attachmentsSelected(uris: List<Uri>) {
+        pickerActive = false
+        pickerTimeout?.cancel()
+        val binding = state.value.binding ?: return
+        if (uris.isEmpty()) return
+        val available = 4 - state.value.attachments.size
+        if (uris.size > available) { mutable.update { it.copy(message = "一条消息最多选择 4 个附件") }; return }
+        mutable.update { it.copy(preparingAttachment = true) }
+        val token = epoch
+        viewModelScope.launch {
+            val prepared = mutableListOf<PendingAttachment>()
+            try {
+                withContext(Dispatchers.IO) {
+                    var total = state.value.attachments.sumOf { it.size }
+                    for (uri in uris) {
+                        val resolver = getApplication<Application>().contentResolver
+                        val rawName = resolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)?.use {
+                            if (it.moveToFirst()) it.getString(0) else null
+                        } ?: "附件"
+                        val name = rawName.filter { it.code >= 32 && it.code !in 127..159 && it.code !in 0x202A..0x202E && it.code !in 0x2066..0x2069 }.take(160).ifBlank { "附件" }
+                        val id = java.util.UUID.randomUUID().toString().replace("-", "")
+                        val file = java.io.File(attachmentDir, id)
+                        try {
+                            val digest = MessageDigest.getInstance("SHA-256")
+                            var size = 0L
+                            resolver.openInputStream(uri)!!.use { input -> file.outputStream().use { output ->
+                                val bytes = ByteArray(65536)
+                                while (true) {
+                                    val count = input.read(bytes)
+                                    if (count < 0) break
+                                    size += count
+                                    require(size + total <= 20L * 1024 * 1024) { "每条消息附件总量不能超过 20 MiB" }
+                                    check(token == epoch) { "连接已变化，请重新选择附件" }
+                                    digest.update(bytes, 0, count); output.write(bytes, 0, count)
+                                }
+                            } }
+                            require(size > 0) { "不能发送空文件" }
+                            val header = ByteArray(12)
+                            file.inputStream().use { it.read(header) }
+                            val image = (header[0] == 0x89.toByte() && header.sliceArray(1..3).toString(Charsets.US_ASCII) == "PNG") ||
+                                (header[0] == 0xff.toByte() && header[1] == 0xd8.toByte()) ||
+                                (header.sliceArray(0..3).toString(Charsets.US_ASCII) == "RIFF" && header.sliceArray(8..11).toString(Charsets.US_ASCII) == "WEBP")
+                            prepared += PendingAttachment(id, name, size, digest.digest().joinToString("") { "%02x".format(it) }, image, file, binding)
+                            total += size
+                        } catch (e: Exception) { file.delete(); throw e }
+                    }
+                }
+                if (token == epoch && binding == state.value.binding) mutable.update { it.copy(attachments = it.attachments + prepared, message = null) }
+                else prepared.forEach { it.file.delete() }
+            } catch (e: Exception) {
+                prepared.forEach { it.file.delete() }
+                if (e is CancellationException) throw e
+                mutable.update { it.copy(message = if (e is IllegalArgumentException || e is IllegalStateException) e.message else "无法读取附件，请重新选择本地文件。") }
+            } finally { mutable.update { it.copy(preparingAttachment = false) } }
+        }
+    }
+    fun removeAttachment(id: String) {
+        if (state.value.busy || state.value.preparingAttachment) return
+        state.value.attachments.find { it.id == id }?.file?.delete()
+        mutable.update { it.copy(attachments = it.attachments.filterNot { a -> a.id == id }) }
+    }
+    private fun clearAttachments() {
+        state.value.attachments.forEach { it.file.delete() }
+        mutable.update { it.copy(attachments = emptyList(), attachmentProgress = "") }
     }
     fun importKey(uri: Uri) {
         if (state.value.busy || state.value.connected) return
@@ -163,17 +257,19 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
     fun select(pane: Pane, terminal: Boolean = false, restored: SessionMemo? = null) {
-        if (state.value.busy || !state.value.connected) return
+        if (state.value.busy || state.value.preparingAttachment || state.value.reconnecting || !state.value.connected) return
         rememberSession()
+        clearAttachments()
         selection++
         loadingMemo = restored
         val prior = restored ?: memos.values.lastOrNull { it.profile == profileId() && it.pane == pane.identity }
-        mutable.update { it.copy(selected = pane, output = emptyList(), message = null, draft = drafts[pane.identity].orEmpty(), terminal = terminal || !pane.canWrite, panel = false, binding = null, messages = emptyList(), skills = emptyList(), chatError = null, historyBefore = null, activity = "unknown", loadingHistory = false, delivery = "", answerDraft = "", screenToken = null, questionHint = false, questionClosed = false, question = null, questionsOpen = false, questionChoice = null, answerQuestion = "", restoreAnchor = "", restoreOffset = 0, seen = "", catchingUp = false, uncertain = (prior?.uncertain ?: false) || recoveryLost) }
+        mutable.update { it.copy(selected = pane, output = emptyList(), message = null, draft = drafts[pane.identity].orEmpty(), terminal = terminal || !pane.canWrite, panel = false, binding = null, messages = emptyList(), skills = emptyList(), chatError = null, historyBefore = null, activity = "unknown", loadingHistory = false, delivery = "", answerDraft = "", screenToken = null, questionHint = false, questionClosed = false, question = null, questionsOpen = false, questionChoice = null, answerQuestion = "", answered = "", restoreAnchor = "", restoreOffset = 0, seen = "", catchingUp = false, uncertain = (prior?.uncertain ?: false) || recoveryLost) }
         startPolling()
     }
     fun back() {
-        if (state.value.busy) return
+        if (state.value.busy || state.value.preparingAttachment || state.value.reconnecting) return
         rememberSession()
+        clearAttachments()
         selection++
         mutable.update { it.copy(selected = null, output = emptyList()) }
     }
@@ -296,7 +392,7 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
         val s = state.value
         val pane = s.selected ?: return
         val binding = s.binding ?: return
-        val text = s.draft
+        val text = s.draft.ifBlank { if (s.attachments.isNotEmpty()) "请查看这些附件。" else "" }
         try { TmuxProtocol.validatePaste(text) }
         catch (e: IllegalArgumentException) { mutable.update { it.copy(message = e.message) }; return }
         if (s.chatError != null) return
@@ -304,8 +400,27 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
             mutable.update { it.copy(questionsOpen = true, message = "请提交当前回答，或点“稍后回答”返回聊天。") }
             return
         }
+        if (s.preparingAttachment || s.reconnecting) return
+        if (s.attachments.isNotEmpty() && (text.startsWith('/') || text.startsWith('!'))) {
+            mutable.update { it.copy(message = "请将附件与 / 命令、! 命令分开发送。") }; return
+        }
+        val sendEpoch = epoch
         write(clearDraft = true) { remote, _ ->
-            val result = JSONObject(remote.bridge(request(pane, "send", binding).put("text", text).toString()))
+            val attachments = org.json.JSONArray()
+            for ((index, attachment) in s.attachments.withIndex()) {
+                check(sendEpoch == epoch && foreground) { "连接已变化" }
+                if (attachment.binding != binding) throw InputRejected("附件属于其他会话，请移除后重新选择")
+                val uploaded = JSONObject(remote.upload(request(pane, "upload", binding).put("attachment", attachment.json()).toString(), attachment.file) { bytes ->
+                    mutable.update { it.copy(attachmentProgress = "上传 ${index + 1}/${s.attachments.size} · ${bytes * 100 / attachment.size}%") }
+                })
+                if (!uploaded.optBoolean("ok")) throw InputRejected(uploaded.optString("error", "附件上传失败，消息未发送"))
+                attachments.put(attachment.json())
+            }
+            mutable.update { it.copy(attachmentProgress = if (s.attachments.isEmpty()) "" else "附件已上传，正在提交消息…") }
+            val command = request(pane, "send", binding).put("text", text)
+            if (attachments.length() > 0) command.put("attachments", attachments)
+            check(sendEpoch == epoch && foreground) { "连接已变化" }
+            val result = JSONObject(remote.bridge(command.toString()))
             if (!result.optBoolean("ok")) {
                 val reason = result.optString("error", "发送未完成")
                 if (result.optBoolean("uncertain")) error(reason) else throw InputRejected(reason)
@@ -367,7 +482,7 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
         val s = state.value
         val pane = s.selected ?: return
         val remote = client ?: return
-        if (!s.connected || s.busy || s.uncertain || !pane.canWrite) return
+        if (!s.connected || s.busy || s.reconnecting || s.preparingAttachment || s.uncertain || !pane.canWrite) return
         val token = epoch
         interaction++
         mutable.update { it.copy(busy = true, screenToken = null, message = null, delivery = if (clearDraft) "sending" else it.delivery) }
@@ -382,7 +497,11 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
                     action(remote, pane)
                 } }
                 if (token == epoch) {
-                    if (clearDraft) drafts.remove(pane.identity)
+                    if (clearDraft) { drafts.remove(pane.identity); clearAttachments() }
+                    if (clearAnswer) {
+                        questionDrafts.remove(memoKey(s.binding.orEmpty()) + ":" + s.answerQuestion)
+                        mutable.update { it.copy(questionChoice = null, answered = "回答已提交到 Codex 输入端") }
+                    }
                     mutable.update { it.copy(busy = false, questionsOpen = if (closeQuestions) false else it.questionsOpen, draft = if (clearDraft) "" else it.draft, message = if (clearDraft) null else successMessage, delivery = if (clearDraft) "submitted" else it.delivery, screenToken = null, answerDraft = if (clearAnswer) "" else it.answerDraft) }
                     rememberSession()
                 }
@@ -482,24 +601,80 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
                     delay(if (state.value.catchingUp) 150 else 1000)
                 } catch (e: Exception) {
                     if (e is CancellationException) throw e
-                    if (token == epoch) disconnect("连接或目标已变化，请重新连接并选择会话。")
-                    break
+                    if (token != epoch) break
+                    if (!recoverConnection(remote, token)) break
+                    cycle = 0
                 }
             }
         }
     }
+    private suspend fun recoverConnection(remote: SshTmuxClient, token: Int): Boolean {
+        if (state.value.busy || state.value.uncertain || !foreground || token != epoch) {
+            if (token == epoch) disconnect("连接中断，请重连核对原会话。")
+            return false
+        }
+        mutable.update { it.copy(reconnecting = true, screenToken = null) }
+        repeat(3) { attempt ->
+            if (!foreground || token != epoch) return false
+            mutable.update { it.copy(message = "网络中断，正在接回原会话（${attempt + 1}/3）…") }
+            delay(1000L shl attempt)
+            try {
+                val snapshot = state.value
+                withContext(Dispatchers.IO) { io.withLock {
+                    check(foreground && token == epoch)
+                    remote.reconnect(snapshot.profile)
+                    val panes = remote.panes()
+                    snapshot.selected?.let { pane ->
+                        check(panes.any { it.identity == pane.identity }) { "原窗格已变化" }
+                        snapshot.binding?.let { binding ->
+                            val result = JSONObject(remote.bridge(request(pane, "snapshot", binding).toString()))
+                            check(result.optBoolean("ok")) { "原会话已变化" }
+                        }
+                    }
+                } }
+                if (!foreground || token != epoch) { remote.close(); return false }
+                mutable.update { it.copy(reconnecting = false, message = "已接回原会话，正在补读消息。") }
+                return true
+            } catch (e: Exception) {
+                if (e is CancellationException) throw e
+                val retryable = e.message.orEmpty().let { it.startsWith("[E_TCP") || it.startsWith("[E_DNS]") || it.startsWith("[E_ROUTE]") || it.startsWith("[E_SSH_TIMEOUT]") }
+                if (!retryable || attempt == 2) {
+                    if (token == epoch) disconnect("接续失败，请重新连接。${e.message?.takeIf { it.startsWith("[") } ?: "原会话或连接需要核对。"}")
+                    return false
+                }
+            }
+        }
+        return false
+    }
     fun disconnect(message: String = "已断开，NAS 上的任务继续运行。") {
         ++epoch
+        pickerPaused = false
+        pickerActive = false
+        pickerTimeout?.cancel()
         poll?.cancel()
         val old = client
         client = null
         rememberSession()
         val uncertain = state.value.uncertain || state.value.busy && state.value.connected
-        mutable.update { it.copy(connected = false, busy = false, output = emptyList(), panes = emptyList(), selected = null, message = message, uncertain = uncertain, binding = null, messages = emptyList(), skills = emptyList(), panel = false) }
+        mutable.update { it.copy(connected = false, busy = false, reconnecting = false, output = emptyList(), panes = emptyList(), selected = null, message = message, uncertain = uncertain, binding = null, messages = emptyList(), skills = emptyList(), panel = false) }
         viewModelScope.launch(Dispatchers.IO) { old?.close() }
     }
     fun foreground(value: Boolean) {
         foreground = value
+        if ((pickerActive || pickerPaused) && client != null) {
+            if (!value) {
+                pickerPaused = true
+                poll?.cancel()
+                mutable.update { it.copy(reconnecting = true, screenToken = null) }
+                client?.pause()
+            } else if (pickerPaused) {
+                pickerPaused = false
+                val remote = client ?: return
+                val token = epoch
+                viewModelScope.launch { if (recoverConnection(remote, token)) startPolling() }
+            }
+            return
+        }
         if (!value && (client != null)) disconnect("已暂停连接。返回后手动重连，原任务继续运行。")
     }
     fun forget() {
@@ -507,6 +682,7 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
         disconnect()
         importedKey?.fill(0); importedKey = null
         drafts.clear()
+        clearAttachments()
         persistJob?.cancel(); memos.clear(); cached.clear(); cursors.clear(); questionDrafts.clear()
         mutable.update { it.copy(busy = true, hasKey = false, draft = "") }
         viewModelScope.launch {
@@ -516,7 +692,7 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
             } catch (_: Exception) { mutable.update { it.copy(busy = false, message = "清除失败，可在系统设置中清除应用数据。") } }
         }
     }
-    override fun onCleared() { client?.close(); importedKey?.fill(0) }
+    override fun onCleared() { client?.close(); importedKey?.fill(0); attachmentDir.listFiles()?.forEach { it.delete() } }
 }
 
 private fun java.io.InputStream.readBytesLimited(max: Int): ByteArray {

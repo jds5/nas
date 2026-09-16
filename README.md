@@ -9,7 +9,7 @@
 | [网络安全架构](docs/architecture/家庭NAS网络安全架构.md) | 入口、网络边界、远程维护与待验收事项 |
 | [设备与运维记录](docs/operations/运维记录.md) | 硬件、存储、备份链、NPM/应用修复与版本记录 |
 | [备份盘休眠](docs/operations/备份盘休眠.md) | 磁盘身份、自纠正 cron、监控与待核验效果 |
-| [Android 安全诊断](docs/security/ANDROID_APP_SECURITY_REVIEW.md) | 0.3.1 审查、修复、测试证据与剩余风险 |
+| [Android 安全诊断](docs/security/ANDROID_APP_SECURITY_REVIEW.md) | 0.4.0 审查、修复、测试证据与剩余风险 |
 | [Android 控制端](apps/android/README.md) | 独立手机 App、构建安装、安全边界与当前限制 |
 | [手机外网连接与 SSH 配置](docs/operations/手机外网连接与SSH密钥配置.md) | 本机连接信息、手机专用密钥、公网入口与 key-only 步骤 |
 | [手机接入现有 tmux 规划](docs/operations/手机接入现有tmux规划.md) | 当前会话定位、手机接入步骤与远控界面选项 |
