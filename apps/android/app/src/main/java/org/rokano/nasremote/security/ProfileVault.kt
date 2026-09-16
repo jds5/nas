@@ -50,7 +50,17 @@ class ProfileVault(context: Context) {
     }
     fun load(): StoredProfile? {
         if (!file.baseFile.exists()) return null
-        val data = file.readFully()
+        val data = file.openRead().use { input ->
+            val out = java.io.ByteArrayOutputStream()
+            val buffer = ByteArray(4096)
+            while (true) {
+                val n = input.read(buffer)
+                if (n < 0) break
+                require(out.size() + n <= 131_072)
+                out.write(buffer, 0, n)
+            }
+            out.toByteArray()
+        }
         require(data.size in 29..131_072)
         val cipher = Cipher.getInstance("AES/GCM/NoPadding")
         cipher.init(Cipher.DECRYPT_MODE, key(), GCMParameterSpec(128, data.copyOfRange(0, 12)))

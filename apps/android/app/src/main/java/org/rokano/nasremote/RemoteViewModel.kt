@@ -2,6 +2,7 @@ package org.rokano.nasremote
 
 import android.app.Application
 import android.net.Uri
+import org.json.JSONObject
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.CancellationException
@@ -18,6 +19,10 @@ import kotlinx.coroutines.withContext
 import org.rokano.nasremote.core.*
 import org.rokano.nasremote.security.ProfileVault
 
+data class ChatItem(val id: String, val role: String, val text: String, val phase: String = "")
+data class SkillOption(val name: String, val description: String)
+private class InputRejected(message: String) : Exception(message)
+
 data class RemoteState(
     val profile: ConnectionProfile = ConnectionProfile("", 22, "", ""),
     val ready: Boolean = false,
@@ -30,6 +35,15 @@ data class RemoteState(
     val message: String? = null,
     val uncertain: Boolean = false,
     val draft: String = "",
+    val terminal: Boolean = false,
+    val panel: Boolean = false,
+    val binding: String? = null,
+    val messages: List<ChatItem> = emptyList(),
+    val skills: List<SkillOption> = emptyList(),
+    val chatError: String? = null,
+    val activity: String = "unknown",
+    val historyBefore: Long? = null,
+    val loadingHistory: Boolean = false,
 )
 
 class RemoteViewModel(application: Application) : AndroidViewModel(application) {
@@ -103,9 +117,9 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
             } finally { key.fill(0); pass.fill(0) }
         }
     }
-    fun select(pane: Pane) {
+    fun select(pane: Pane, terminal: Boolean = false) {
         if (state.value.busy || !state.value.connected) return
-        mutable.update { it.copy(selected = pane, output = emptyList(), message = null, draft = drafts[pane.identity].orEmpty()) }
+        mutable.update { it.copy(selected = pane, output = emptyList(), message = null, draft = drafts[pane.identity].orEmpty(), terminal = terminal || !pane.canWrite, panel = false, binding = null, messages = emptyList(), skills = emptyList(), chatError = null, historyBefore = null, activity = "unknown", loadingHistory = false) }
         startPolling()
     }
     fun back() {
@@ -118,7 +132,60 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
         state.value.selected?.let { drafts[it.identity] = value }
         mutable.update { it.copy(draft = value) }
     }
-    fun acknowledge() { mutable.update { it.copy(uncertain = false, message = null) } }
+    fun terminal(value: Boolean) {
+        if (!state.value.busy) mutable.update { it.copy(terminal = value, panel = false) }
+    }
+    fun panel(value: Boolean) { mutable.update { it.copy(panel = value, output = if (value) emptyList() else it.output) } }
+    fun send() {
+        val s = state.value
+        val pane = s.selected ?: return
+        val binding = s.binding ?: return
+        val text = s.draft
+        try { TmuxProtocol.validatePaste(text) }
+        catch (e: IllegalArgumentException) { mutable.update { it.copy(message = e.message) }; return }
+        if (s.chatError != null) return
+        write(clearDraft = true) { remote, _ ->
+            val result = JSONObject(remote.bridge(request(pane, "send", binding).put("text", text).toString()))
+            if (!result.optBoolean("ok")) {
+                val reason = result.optString("error", "发送未完成")
+                if (result.optBoolean("uncertain")) error(reason) else throw InputRejected(reason)
+            }
+        }
+        if (text.startsWith("/")) panel(true)
+    }
+    private fun request(pane: Pane, action: String, binding: String? = null): JSONObject = JSONObject()
+        .put("action", action).put("pane", JSONObject().put("id", pane.id).put("pid", pane.pid).put("serverPid", pane.serverPid))
+        .apply { if (binding != null) put("binding", binding) }
+
+    private fun mergeChat(old: List<ChatItem>, result: JSONObject, older: Boolean = false): List<ChatItem> {
+        val array = result.optJSONArray("messages") ?: return old
+        val incoming = (0 until array.length()).map { i -> array.getJSONObject(i).let {
+            ChatItem(it.getString("id"), it.getString("role"), TerminalText.clean(it.getString("text")), it.optString("phase"))
+        } }
+        val combined = if (older) incoming.filter { v -> old.none { it.id == v.id } }.takeLast((300 - old.size).coerceAtLeast(0)) + old else old + incoming
+        return combined.distinctBy { it.id }.let { if (older) it.take(300) else it.takeLast(300) }
+    }
+    fun loadHistory() {
+        val s = state.value
+        val pane = s.selected ?: return
+        val before = s.historyBefore?.takeIf { it > 0 } ?: return
+        val remote = client ?: return
+        if (s.loadingHistory || s.busy || s.binding == null) return
+        val token = epoch
+        mutable.update { it.copy(loadingHistory = true) }
+        viewModelScope.launch {
+            try {
+                val result = withContext(Dispatchers.IO) { io.withLock {
+                    JSONObject(remote.bridge(request(pane, "snapshot", s.binding).put("before", before).toString()))
+                } }
+                if (token == epoch && state.value.selected?.identity == pane.identity && state.value.binding == s.binding) mutable.update {
+                    if (result.optBoolean("ok")) it.copy(messages = mergeChat(it.messages, result, older = true), historyBefore = result.getLong("before"), loadingHistory = false)
+                    else it.copy(loadingHistory = false, message = result.optString("error"))
+                }
+            } catch (_: Exception) { if (token == epoch) mutable.update { it.copy(loadingHistory = false, message = "历史读取失败，可稍后重试") } }
+        }
+    }
+    fun acknowledge() { if (state.value.connected && state.value.output.isNotEmpty()) mutable.update { it.copy(uncertain = false, message = null) } }
     fun paste() {
         val text = state.value.draft
         try { TmuxProtocol.validatePaste(text) }
@@ -126,7 +193,7 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
         write { remote, pane -> remote.paste(pane, text) }
     }
     fun key(key: RemoteKey) = write { remote, pane -> remote.key(pane, key) }
-    private fun write(action: (SshTmuxClient, Pane) -> Unit) {
+    private fun write(clearDraft: Boolean = false, action: (SshTmuxClient, Pane) -> Unit) {
         val s = state.value
         val pane = s.selected ?: return
         val remote = client ?: return
@@ -139,10 +206,15 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
                     check(token == epoch && foreground) { "连接已变化" }
                     action(remote, pane)
                 } }
-                if (token == epoch) mutable.update { it.copy(busy = false, message = "已发送终端输入；请以窗格显示为准。") }
+                if (token == epoch) {
+                    if (clearDraft) drafts.remove(pane.identity)
+                    mutable.update { it.copy(busy = false, draft = if (clearDraft) "" else it.draft, message = if (clearDraft) null else "已发送终端操作。") }
+                }
             } catch (e: Exception) {
                 if (e is CancellationException) throw e
-                if (token == epoch) {
+                if (token == epoch && e is InputRejected) {
+                    mutable.update { it.copy(busy = false, message = e.message, panel = true, output = emptyList()) }
+                } else if (token == epoch) {
                     disconnect("发送结果待确认。请重新连接并查看原窗格，确认后再操作。")
                     mutable.update { it.copy(uncertain = true) }
                 }
@@ -157,15 +229,33 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
             var cycle = 0
             while (foreground && token == epoch && state.value.connected) {
                 try {
-                    val pane = state.value.selected
+                    val snapshot = state.value
+                    val pane = snapshot.selected
                     val result = withContext(Dispatchers.IO) { io.withLock {
                         val panes = if (cycle % 5 == 0) remote.panes() else null
-                        val lines = pane?.let { remote.capture(it).lineSequence().takeLastBounded(400) }
-                        panes to lines
+                        val lines = pane?.takeIf { snapshot.terminal || snapshot.panel || snapshot.uncertain }
+                            ?.let { remote.capture(it).lineSequence().takeLastBounded(400) }
+                        val chat = pane?.takeIf { !snapshot.terminal && it.canWrite }?.let {
+                            try { JSONObject(remote.bridge(request(it, "snapshot", snapshot.binding)
+                                .put("includeSkills", snapshot.binding == null).toString())) }
+                            catch (_: Exception) { JSONObject().put("ok", false).put("error", "无法读取会话消息，可切换终端模式检查 Python / Codex 兼容性") }
+                        }
+                        Triple(panes, lines, chat)
                     } }
                     if (token != epoch) break
                     mutable.update {
-                        it.copy(panes = result.first ?: it.panes, output = if (it.selected?.identity == pane?.identity) result.second ?: it.output else it.output)
+                        if (it.selected?.identity != pane?.identity) it else {
+                            val chat = result.third
+                            val valid = chat?.optBoolean("ok") == true
+                            val skillArray = chat?.optJSONArray("skills")
+                            it.copy(panes = result.first ?: it.panes, output = result.second ?: it.output,
+                                messages = if (valid) mergeChat(it.messages, chat) else it.messages,
+                                binding = if (valid) chat.getString("binding") else it.binding,
+                                chatError = if (chat != null && !valid) chat.optString("error") else null,
+                                activity = if (valid && chat.optString("status") != "unknown") chat.optString("status") else it.activity,
+                                historyBefore = it.historyBefore ?: if (valid) chat.getLong("before") else null,
+                                skills = if (skillArray != null) (0 until skillArray.length()).map { i -> skillArray.getJSONObject(i).let { v -> SkillOption(v.getString("name"), v.optString("description")) } } else it.skills)
+                        }
                     }
                     cycle++
                     delay(1000)
@@ -183,7 +273,7 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
         val old = client
         client = null
         val uncertain = state.value.uncertain || state.value.busy && state.value.connected
-        mutable.update { it.copy(connected = false, busy = false, output = emptyList(), panes = emptyList(), selected = null, message = message, uncertain = uncertain) }
+        mutable.update { it.copy(connected = false, busy = false, output = emptyList(), panes = emptyList(), selected = null, message = message, uncertain = uncertain, binding = null, messages = emptyList(), skills = emptyList(), panel = false) }
         viewModelScope.launch(Dispatchers.IO) { old?.close() }
     }
     fun foreground(value: Boolean) {

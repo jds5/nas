@@ -32,7 +32,13 @@ class SshIntegrationTest {
             command("ssh-keygen", "-q", "-t", "ed25519", "-N", "test-only-password", "-f", "$dir/client")
             Files.copy(dir.resolve("client.pub"), dir.resolve("authorized_keys"))
             val reply = dir.resolve("reply")
-            Files.writeString(reply, "#!/bin/sh\nprintf '%s\\n' '%4\t120\t80\t0\ttest\tcodex\t/tmp'\n")
+            Files.writeString(reply, """
+                #!/bin/sh
+                case "${'$'}SSH_ORIGINAL_COMMAND" in
+                  "python3 -c "*) exec /bin/sh -c "${'$'}SSH_ORIGINAL_COMMAND" ;;
+                  *) printf '%s\n' '%4	120	80	0	test	codex	/tmp' ;;
+                esac
+            """.trimIndent())
             reply.toFile().setExecutable(true, true)
             val port = ServerSocket(0).use { it.localPort }
             Files.writeString(dir.resolve("sshd_config"), """
@@ -66,6 +72,12 @@ class SshIntegrationTest {
                 SshTmuxClient().use { client ->
                     client.connect(profile, key, password)
                     assertEquals("%4", client.panes().single().id)
+                    // Exercises the bundled resource and shell quoting over actual SSH.
+                    // Invalid target is rejected before touching any tmux server.
+                    val refused = client.bridge("""{"action":"snapshot","pane":{"id":"invalid;echo INJECTED"}}""")
+                    assertTrue(refused.contains("\"ok\": false"))
+                    assertTrue(refused.contains("窗格标识无效"))
+                    assertFalse(refused.contains("INJECTED"))
                 }
                 SshTmuxClient().use { client ->
                     val failure = assertThrows(IllegalStateException::class.java) {

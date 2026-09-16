@@ -56,6 +56,14 @@ class SshTmuxClient : AutoCloseable {
         }
     }
 
+    /** Fixed bundled program; request data is carried only on stdin. No NAS installation. */
+    fun bridge(request: String): String = exec(bridgeCommand, request.toByteArray(Charsets.UTF_8))
+
+    private val bridgeCommand: String by lazy {
+        val script = requireNotNull(javaClass.getResourceAsStream("/nas_remote_bridge.py")).bufferedReader().use { it.readText() }
+        "python3 -c '" + script.replace("'", "'\"'\"'") + "'"
+    }
+
     fun panes(): List<Pane> = TmuxProtocol.parsePanes(exec(TmuxProtocol.LIST))
     fun capture(pane: Pane): String = TerminalText.clean(exec(TmuxProtocol.capture(pane)))
     fun paste(pane: Pane, text: String) {

@@ -42,7 +42,7 @@ import org.rokano.nasremote.core.*
 @Composable
 fun NasRemoteApp(model: RemoteViewModel) {
     val state by model.state.collectAsStateWithLifecycle()
-    val screen = if (!state.connected) "connection" else if (state.selected == null) "panes" else "terminal"
+    val screen = if (!state.connected) "connection" else if (state.selected == null) "panes" else if (state.terminal) "terminal" else "chat"
     BackHandler(state.selected != null && state.connected) { model.back() }
     NasTheme {
         Scaffold(
@@ -55,6 +55,7 @@ fun NasRemoteApp(model: RemoteViewModel) {
                 }, navigationIcon = {
                     if (state.selected != null && state.connected) TextButton(onClick = model::back, enabled = !state.busy) { Text("返回") }
                 }, actions = {
+                    if (state.selected?.canWrite == true && state.connected) TextButton(onClick = { model.terminal(!state.terminal) }, enabled = !state.busy) { Text(if (state.terminal) "聊天" else "终端") }
                     if (state.connected) TextButton(onClick = { model.disconnect() }) { Text("断开") }
                 })
             },
@@ -76,6 +77,7 @@ fun NasRemoteApp(model: RemoteViewModel) {
                     when (destination) {
                         "connection" -> ConnectionScreen(state, model)
                         "panes" -> PanesScreen(state, model)
+                        "chat" -> ChatScreen(state, model)
                         else -> TerminalScreen(state, model)
                     }
                 }
@@ -161,7 +163,10 @@ private fun PanesScreen(state: RemoteState, model: RemoteViewModel) {
                         SuggestionChip(onClick = { model.select(pane) }, label = { Text(if (pane.canWrite) "Codex" else "仅查看") })
                     }
                     Text(pane.path, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                    Text("${pane.id}  ·  ${pane.command}", style = MaterialTheme.typography.labelMedium)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("${pane.id}  ·  ${pane.command}", Modifier.weight(1f), style = MaterialTheme.typography.labelMedium)
+                        if (pane.canWrite) TextButton(onClick = { model.select(pane, terminal = true) }) { Text("终端模式") }
+                    }
                 }
             }
         }

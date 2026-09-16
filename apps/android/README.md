@@ -1,13 +1,16 @@
 # 接续 · NAS Remote
 
-独立 Android 子项目：通过 SSH 查看已有 tmux 窗格，向同一 Codex 进程发送中文和特殊键。无需部署 NAS Web 服务，也不会新建或重启 Codex。当前为 0.1.1 原型，先连接测试会话，再接入正在使用的会话。
+独立 Android 子项目：通过 SSH 接续 NAS 上正在运行的 Codex。0.2.0 默认展示聊天消息，普通输入框一次发送；原终端模式保留为可选入口。无需新端口或 NAS 常驻服务，不新建、恢复或分叉正在控制的 Codex。
 
 ## 结构
 
 ```text
 apps/android/
   app/                 # Compose 界面、连接生命周期、Keystore 凭据存储
-  core/                # SSH、主机指纹、tmux 协议与安全测试（纯 Kotlin/JVM）
+  core/                # JVM SSH/tmux 传输、安全测试
+    src/main/resources/nas_remote_bridge.py  # 随包分发、通过 SSH 执行的无状态适配器
+    src/test/python/   # 消息过滤、输入保护、真实 tmux / proc 测试
+  distribution/        # 仅 LAN 的 APK 下载页面
   gradle/wrapper/       # 固定 Gradle 版本与发行包校验
 ```
 
@@ -24,6 +27,7 @@ cd apps/android
 NAS_TMUX_TESTS=1 ./gradlew :core:test --rerun-tasks
 # 另有本机 /usr/sbin/sshd 时，可加入临时 loopback SSH 认证测试
 NAS_TMUX_TESTS=1 NAS_SSH_TESTS=1 ./gradlew :core:test --rerun-tasks
+NAS_TMUX_TESTS=1 python3 -m unittest discover -s core/src/test/python -v
 adb install -r app/build/outputs/apk/debug/app-debug.apk
 ```
 
@@ -43,10 +47,10 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 2. 从可信 NAS 终端执行 `ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub -E sha256` 核对主机指纹。填写完整 `SHA256:...`，不含末尾注释；不要只通过未经核验的 `ssh-keyscan` 建立信任。
 3. 将手机专用私钥通过可信路径转移至手机，在 App 导入。连接成功后 App 加密保存副本；确认可用后自行清理传输副本。口令每次连接输入，不保存。
 4. 填入主机、端口、SSH 用户及指纹。外网填写已验收的公网主机和路由器外部 SSH 端口；Android 17 仅在访问内网地址时按需授权。App 不负责路由器转发或 VPN 配置。
-5. 选择窗格，先阅读输出。在独立输入框编辑后按“粘贴到窗格”，核对后按“回车”。其他程序只读；首版仅向前台命令名为 `codex` 的窗格发送输入。
+5. 点击 Codex 会话默认进入聊天页，编辑后点“发送”。输入 `/` 选择命令，`/skills` 打开技能列表，选择技能插入 `$技能名`；`!命令` 在 NAS 的 Codex 中执行。需要菜单、审批或核对已有草稿时打开“控制面板”。列表及顶部的“终端”保留原先的粘贴、回车操作；其他程序仍只读。
 6. 离开 App 或锁屏会关闭 SSH；远端任务继续。返回后手动重连。电脑和手机共享输入，请避免同时操作。
 
-首版使用默认 tmux socket，远端需要 POSIX shell、PATH 中的 tmux（已在 3.5a 验证）。不支持跳板、密码登录、SSH 配置文件和自定义 socket。连接需有正在运行的 tmux server。填写的指纹必须与 SSH 实际协商的主机密钥匹配；指纹变更时拒绝连接，需通过可信渠道重新核对。
+使用默认 tmux socket，远端需要 POSIX shell、PATH 中的 tmux（已在 3.5a 验证）。聊天模式另外需要 Linux `/proc`、Python 3.9+ 以及同一 Unix 用户可读取的运行中 Codex rollout 文件（本次验证 CLI 0.154.0）。不支持跳板、密码登录、SSH 配置文件和自定义 socket。连接需有正在运行的 tmux server。填写的指纹必须与 SSH 实际协商的主机密钥匹配；指纹变更时拒绝连接，需通过可信渠道重新核对。
 
 ## 安全边界
 
@@ -56,16 +60,29 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 - 输入通过 SSH stdin → 随机命名 tmux buffer 传递，不拼入 shell 命令；拒绝终端控制字符，单次最多 16 KiB。发送前校验 pane ID、pane PID、server PID、存活与前台命令；目标变化则失败，不自动创建替代会话。
 - 检查与发送并非操作系统级原子操作，不能保证目标恰在检查后退出时绝对不会落入其他程序；tmux 和当前 Unix 用户本身属于信任边界。命令名也不是程序签名认证。
 - 写入结果不确定时立即断开，禁止自动重试；重连、读取窗格并手动确认后恢复操作。Ctrl-C 需二次确认。按钮成功只表示终端输入已发送，不代表任务执行成功。
-- 输出按不可信纯文本显示，不执行 ANSI/OSC、HTML、链接或远端剪贴板动作；限制单次读取为 256 KiB、显示约 400 行。
+- 输出使用原生文字组件，可选择复制，支持标题、粗体、行内代码和代码块；不执行 ANSI/OSC、HTML、链接或远端剪贴板动作，不加载远程图片。SSH 单次响应上限 256 KiB；聊天每次扫描至多 1 MiB，返回至多 80 条/约 180 KB 消息，单条上限 24,000 字符，App 内至多 300 条；终端显示约 400 行。
 - App 限制不是服务器权限隔离：手机持有的 SSH 密钥仍具有该 NAS 用户的权限。遗失手机后应在 NAS 撤销对应公钥；“清除本机资料”不会撤销服务器授权。
 
 ## 体验与当前限制
 
-第一版每秒读取 `capture-pane` 屏幕快照，不附着 PTY，不改变电脑窗口尺寸，也不向终端声称已经建立结构化聊天协议。它提供完整的本地中文编辑和明确的终端键操作，但不是完整终端模拟器：不保留全部历史、颜色、光标、鼠标或终端排版，手机文字会重新换行。轮询中断时先重连，避免盲目发送。
+默认聊天模式按所选 pane 的进程树找到 **该 Codex 进程正在打开的会话文件**，用进程启动时间、文件 inode 和会话 ID 绑定；不按目录或“最新文件”猜会话。每秒读取已落盘的公开用户消息、Codex 进展和最终回复，排除内部推理、系统/开发者提示、代理工具日志。只有用户主动 `!` 执行的命令结果作为独立消息显示。
 
-页面、列表和系统组件使用 Compose/Material 动画，SSH 与文件操作在 IO 线程，终端更新不强制播放长动画，界面遵循系统动画时长设置。是否达到设备的 60/90/120 Hz 帧预算仍需在真机 Release 构建中用 Perfetto / Macrobenchmark 验证；不能以框架选择替代性能测量。
+“发送”在同一 SSH 操作内完成 bracketed paste 与 Enter，先核对原执行器和电脑端空输入框，再核对粘贴结果。支持中文、多行、换行及长文本折叠卡片；无法识别的界面、已有草稿或会话变化会拒绝盲目回车。粘贴后状态不确定则保留草稿、断开连接，重连核对后恢复，不能直接再次点发送。电脑和手机不能同时输入；这些检查不是输入锁。
 
-后续优先验证：真机 Keystore/Ed25519 连接、中文输入法与多行粘贴、Android 17 权限拒绝/撤销、锁屏及网络切换、发送期间断网、目标退出、横竖屏和字体缩放。当前只实现 tmux 路径；结构化协议、通知和后台连接未实现。
+- `/` 提供常用命令建议，也能输入其他原生 Codex 命令；发送后打开真实终端控制面板，通过方向键、Tab、确认和 Esc 操作。权限确认不自动同意，不伪造审批卡片。
+- `/skills` 浏览 NAS 上有界扫描得到的 SKILL.md 名称和说明，选择后使用 Codex 原生 `$技能名`；实际加载、同名技能和插件可用性以当前 Codex 会话为准。可选择“打开 Codex 原菜单”。
+- `!` 原样交给 Codex 的 shell 模式，沿用当前 Codex 权限；不经桥接直接执行用户 shell 文本。命令在 NAS 上运行，不是手机本地命令。
+- 这是当前 CLI 的适配层，**不是官方 Remote Control / App Server 协议**。消息在 Codex 写入完成事件后出现，不支持逐 token 流式输出；没有可靠事件的菜单状态仍在控制面板查看。
+- 从未产生过记录的新会话、其他 CLI 版本或无法唯一关联的文件会提示使用终端模式。先在原终端产生一轮记录，再返回列表重新打开即可尝试聊天模式。
+- 单条超过显示上限、超过 300 条历史、超过 1 MiB 的单条 JSON 记录或无法识别的界面需要终端核对。退出 App 后聊天内容不保存在手机；NAS 自身的 Codex 日志保留策略不受 App 控制。
+
+界面沿用稳定版 Material 3、动态配色和系统动画设置；聊天使用稳定消息 ID、惰性列表、轻量原生 Markdown 显示和列表过渡，网络与文件操作在 IO 线程。未连接 Android 真机/模拟器，不能宣称达到 60/90/120 Hz；本版仍需实机验证输入法、旋转、字体缩放、锁屏换网以及发送期间断网。
+
+## 0.2.0 验证（2026-09-16）
+
+14 项 Python 桥接测试、9 项 JVM 测试（含隔离 tmux 和 loopback OpenSSH）、3 项下载服务测试通过。Debug / Release 构建及 Lint 通过。真实隔离 Codex 0.154.0 验证 `!printf`、`/status`、中文多行、长文本折叠识别；当前项目会话只做消息关联读取，没有发送测试输入。APK 使用与旧版相同的本机测试签名，可覆盖更新。
+
+安全诊断、修复与待办见 [项目安全诊断](../../docs/security/ANDROID_APP_SECURITY_REVIEW.md)。LAN 下载与校验结果记录在 [运维记录](../../docs/operations/运维记录.md)。
 
 ## 0.1.1 更新（2026-09-16）
 
