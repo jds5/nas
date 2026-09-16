@@ -1,6 +1,6 @@
 # 接续 · NAS Remote
 
-独立 Android 子项目：通过 SSH 查看已有 tmux 窗格，向同一 Codex 进程发送中文和特殊键。无需部署 NAS Web 服务，也不会新建或重启 Codex。当前为 0.1.0 原型，先连接测试会话，再接入正在使用的会话。
+独立 Android 子项目：通过 SSH 查看已有 tmux 窗格，向同一 Codex 进程发送中文和特殊键。无需部署 NAS Web 服务，也不会新建或重启 Codex。当前为 0.1.1 原型，先连接测试会话，再接入正在使用的会话。
 
 ## 结构
 
@@ -31,12 +31,18 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 
 依赖固定版本：AGP 9.4.0、Gradle 9.6.0、Kotlin 2.4.20、Compose BOM 2026.09.00、Material 3 1.4.0、JSch 2.28.7、Bouncy Castle 1.86。Material 3 使用当前稳定发布，不引入 alpha 组件；使用公开的 Compose 弹簧动画、动态配色、深色主题、页面与列表过渡。依赖版本依据及本轮验证见下文。
 
+## 外网使用前提
+
+本 App 主要用于在外部网络连接本仓库所在的 NAS，本机就是 SSH/tmux 目标。支持公网 IP / DNS-only DDNS＋自定义外部 SSH 端口；VPN 可选，不是必须先安装的条件。现有 HTTPS 业务入口不能直接替代原生 SSH 转发。Android 17 的局域网权限不再阻止公网连接，使用内网地址时按需授权。
+
+公网入口、本机信息与完整密钥配置步骤见 [外网连接手册](../../docs/operations/手机外网连接与SSH密钥配置.md)。局域网获取测试 APK 可打开 **http://192.168.50.33:8765/**，服务说明见 [distribution](distribution/README.md)。
+
 ## 首次连接
 
 1. 在可信电脑上为手机创建独立 SSH 密钥，例如 `ssh-keygen -t ed25519 -f nas-phone`，设置私钥口令；按现有 NAS SSH 管理流程授权 `nas-phone.pub`。授权的 Unix 用户必须能访问目标 tmux 默认 socket。不要导入日常管理员的通用私钥。
 2. 从可信 NAS 终端执行 `ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub -E sha256` 核对主机指纹。填写完整 `SHA256:...`，不含末尾注释；不要只通过未经核验的 `ssh-keyscan` 建立信任。
 3. 将手机专用私钥通过可信路径转移至手机，在 App 导入。连接成功后 App 加密保存副本；确认可用后自行清理传输副本。口令每次连接输入，不保存。
-4. 填入主机、端口、SSH 用户及指纹。Android 17 首次需授权局域网访问。外网先按仓库网络架构接入已有受保护网络；App 不负责 VPN 配置。
+4. 填入主机、端口、SSH 用户及指纹。外网填写已验收的公网主机和路由器外部 SSH 端口；Android 17 仅在访问内网地址时按需授权。App 不负责路由器转发或 VPN 配置。
 5. 选择窗格，先阅读输出。在独立输入框编辑后按“粘贴到窗格”，核对后按“回车”。其他程序只读；首版仅向前台命令名为 `codex` 的窗格发送输入。
 6. 离开 App 或锁屏会关闭 SSH；远端任务继续。返回后手动重连。电脑和手机共享输入，请避免同时操作。
 
@@ -61,7 +67,11 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 
 后续优先验证：真机 Keystore/Ed25519 连接、中文输入法与多行粘贴、Android 17 权限拒绝/撤销、锁屏及网络切换、发送期间断网、目标退出、横竖屏和字体缩放。当前只实现 tmux 路径；结构化协议、通知和后台连接未实现。
 
-## 本轮验证（2026-09-16）
+## 0.1.1 更新（2026-09-16）
+
+修正连接页的公网使用定位，移除所有连接都必须授予局域网权限的错误限制，保持指纹和公钥认证要求。Release 构建与 Lint 通过；签名安装包现保存在 `distribution/build/nas-remote-0.1.1.apk`，并已启动局域网下载页。服务器实际下载得到的 APK 与本机签名文件完全一致。SSH 配置和外网入口只做核对、记录操作步骤，未修改生产 SSH/防火墙。
+
+## 0.1.0 验证记录（2026-09-16）
 
 - 9 项测试通过，0 跳过：7 项安全单元测试；隔离 tmux server 的真实输入/目标保护测试；临时 loopback OpenSSH 的带口令 Ed25519 登录、错误口令及主机指纹拒绝测试。SSH 测试显式使用 Android 所需的 BC 签名实现，服务端命令输出为测试数据，不连接生产 tmux。
 - `:app:assembleDebug`、`:app:assembleRelease`、`:app:lintDebug` 均通过。Lint 无错误，仅提示 Gradle 有新版本；保留与 AGP 配套验证的 9.6.0。

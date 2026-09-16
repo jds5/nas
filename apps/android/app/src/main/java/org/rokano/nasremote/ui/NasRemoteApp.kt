@@ -107,15 +107,15 @@ private fun ConnectionScreen(state: RemoteState, model: RemoteViewModel) {
         Surface(color = MaterialTheme.colorScheme.primaryContainer, shape = RoundedCornerShape(28.dp), modifier = Modifier.fillMaxWidth()) {
             Column(Modifier.padding(24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text("回到正在进行的事", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.SemiBold)
-                Text("连接你的 NAS，继续原来的会话。", style = MaterialTheme.typography.bodyLarge)
+                Text("在外也能连接家中的 NAS，继续原来的会话。", style = MaterialTheme.typography.bodyLarge)
                 Text("SSH 加密  ·  主机指纹校验", style = MaterialTheme.typography.labelLarge)
             }
         }
         Text("连接到主机", style = MaterialTheme.typography.titleLarge)
-        OutlinedTextField(host, { host = it.trim() }, label = { Text("主机地址") }, placeholder = { Text("192.168.50.33") }, singleLine = true, enabled = !state.busy && state.ready, modifier = Modifier.fillMaxWidth())
+        OutlinedTextField(host, { host = it.trim() }, label = { Text("公网主机 / DDNS 地址") }, placeholder = { Text("ssh.example.com") }, supportingText = { Text("填写 SSH 主机名或 IP，不含 https://；内网测试也可填写局域网 IP。") }, singleLine = true, enabled = !state.busy && state.ready, modifier = Modifier.fillMaxWidth())
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             OutlinedTextField(user, { user = it.trim() }, label = { Text("SSH 用户") }, singleLine = true, enabled = !state.busy, modifier = Modifier.weight(2f))
-            OutlinedTextField(port, { port = it.filter(Char::isDigit).take(5) }, label = { Text("端口") }, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), enabled = !state.busy, modifier = Modifier.weight(1f))
+            OutlinedTextField(port, { port = it.filter(Char::isDigit).take(5) }, label = { Text("SSH 端口") }, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), enabled = !state.busy, modifier = Modifier.weight(1f))
         }
         OutlinedTextField(fingerprint, { fingerprint = it.trim() }, label = { Text("服务器 SHA256 指纹") }, supportingText = { Text("从已信任的电脑或 NAS 核对后填写，不接受未知指纹。") }, enabled = !state.busy, modifier = Modifier.fillMaxWidth())
         OutlinedButton(onClick = { import.launch(arrayOf("*/*")) }, enabled = !state.busy && state.ready, modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp)) {
@@ -125,13 +125,13 @@ private fun ConnectionScreen(state: RemoteState, model: RemoteViewModel) {
             visualTransformation = PasswordVisualTransformation(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password), enabled = !state.busy, modifier = Modifier.fillMaxWidth())
         Text("私钥由 Android Keystore 加密保护；口令不保存。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         if (!networkAllowed) {
-            OutlinedButton(onClick = { permission.launch(localPermission) }, modifier = Modifier.fillMaxWidth()) { Text("允许连接局域网设备") }
-            Text("Android 17 需要附近设备权限才能连接本地 NAS。", style = MaterialTheme.typography.bodySmall)
+            OutlinedButton(onClick = { permission.launch(localPermission) }, modifier = Modifier.fillMaxWidth()) { Text("授权局域网访问（可选）") }
+            Text("公网连接无需此权限；连接局域网地址时，Android 17 需要授权。", style = MaterialTheme.typography.bodySmall)
         }
         Button(onClick = {
             model.connect(ConnectionProfile(host, port.toIntOrNull() ?: 0, user, fingerprint), passphrase)
             passphrase = ""
-        }, enabled = networkAllowed && state.ready && state.hasKey && !state.busy, modifier = Modifier.fillMaxWidth().height(56.dp)) { Text("连接并查看会话", style = MaterialTheme.typography.titleMedium) }
+        }, enabled = state.ready && state.hasKey && !state.busy, modifier = Modifier.fillMaxWidth().height(56.dp)) { Text("连接并查看会话", style = MaterialTheme.typography.titleMedium) }
         if (state.hasKey || state.message != null) TextButton(onClick = { forget = true }, enabled = !state.busy, modifier = Modifier.align(Alignment.CenterHorizontally)) { Text("清除本机连接资料") }
         Spacer(Modifier.height(20.dp))
     }

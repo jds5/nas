@@ -25,6 +25,10 @@
 
 核对命令：`tmux display-message`、`list-panes`、`list-clients`、`show-options`，`ip -brief address`，`ss -ltn`，Codex 版本与帮助、daemon 版本查询，以及进程角色检查。没有抓取其他会话的屏幕内容或读取凭据。
 
+## 外网使用定位修正（2026-09-16）
+
+用户明确本机即 NAS 和 App 连接目标，手机主要在外部网络使用。以下局域网阶段仅用于接入测试，不是产品使用前提。App 支持公网主机＋外部 SSH TCP 端口；VPN 为可选路线，公网地址和已有 Web 服务不等于 SSH 可达。当前实施以 [外网连接与密钥配置](手机外网连接与SSH密钥配置.md) 为准，替代下文早期“VPN 优先、以后再选公网 SSH”的顺序。
+
 ## 第一阶段：局域网接回当前对话
 
 ```text
