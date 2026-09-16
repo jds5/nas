@@ -334,7 +334,177 @@ def screen_token(screen):
     marker = '• Queued follow-up inputs'
     if marker in screen:
         screen = screen[screen.rfind(marker):]
+        screen = re.sub(r'(?m)^(  \? \d+ questions?) · [0-9smh ]+$', r'\1', screen)
     return hashlib.sha256(screen.encode()).hexdigest()
+
+
+def native_question(screen, answer=None):
+    """Conservative adapter for the observed async-question view, never approvals."""
+    marker = '• Queued follow-up inputs'
+    if marker not in screen:
+        return None
+    lines = screen[screen.rfind(marker) + len(marker):].splitlines()
+    while lines and not lines[0].strip():
+        lines.pop(0)
+    while lines and not lines[-1].strip():
+        lines.pop()
+    if not lines or not re.fullmatch(r'  enter submit   ctrl \+ \] skip   alt \+ ↓ (?:main prompt|prev question)(?:   shift \+ ← next question)?', lines[-1]):
+        return None
+    footer = lines.pop()
+    index, count = 1, 1
+    if lines and re.fullmatch(r'  \d+ of \d+', lines[0]):
+        index, count = map(int, lines.pop(0).strip().split(' of '))
+    if not 1 <= index <= count <= 32:
+        return None
+    if ('prev question' in footer) != (index > 1) or ('next question' in footer) != (index < count):
+        return None
+    title, options, selected = [], [], None
+    for line in lines:
+        match = re.fullmatch(r'(?:  (›) |    )(\d+)\. (.+)', line)
+        if match:
+            if int(match[2]) != len(options) + 1:
+                return None
+            options.append(match[3])
+            if match[1]:
+                if selected is not None:
+                    return None
+                selected = len(options) - 1
+        elif line.strip():
+            if options:
+                # TUI-wrapped option text retains an indented continuation.
+                if not line.startswith('       '):
+                    return None
+                options[-1] += '\n' + line.strip()
+            else:
+                title.append(line.strip())
+    free_text = not options
+    if free_text:
+        groups, group = [], []
+        for line in lines:
+            if line.strip():
+                group.append(line.strip())
+            elif group:
+                groups.append(group); group = []
+        if group:
+            groups.append(group)
+        expected_input = 'Type your answer' if answer is None else answer
+        if len(groups) < 2 or re.sub(r'\s+', '', '\n'.join(groups[-1])) != re.sub(r'\s+', '', expected_input):
+            return None
+        title = [line for group in groups[:-1] for line in group]
+        options, selected = [expected_input], 0
+    if not title or not 1 <= len(options) <= 9 or selected is None:
+        return None
+    other = ('Type your answer' if free_text else 'Other') if answer is None else answer
+    if re.sub(r'\s+', '', options[-1]) != re.sub(r'\s+', '', other):
+        return None  # Existing desktop draft / unsupported layout: manual fallback.
+    options[-1] = 'Other'
+    question = '\n'.join(title)
+    identity = json.dumps([index, count, question, options, free_text], ensure_ascii=False)
+    if len(identity.encode()) > 8192:
+        return None
+    return {'id': hashlib.sha256(identity.encode()).hexdigest(), 'title': question,
+            'index': index, 'count': count, 'options': options, 'selected': selected, 'freeText': free_text,
+            'previous': 'prev question' in footer, 'next': 'next question' in footer}
+
+
+def leave_question(request, pane, binding):
+    def read():
+        target(request)
+        current, stream, _ = locate(pane)
+        stream.close()
+        if current != binding:
+            raise Refused('会话已变化')
+        return clean(run('tmux', 'capture-pane', '-p', '-t', pane['id']))[-14000:]
+    screen = read()
+    question = native_question(screen)
+    if not question or request.get('screenToken') != screen_token(screen):
+        raise Refused('问题画面已变化，请重新查看')
+    touched = False
+    try:
+        for index in range(question['index'], 0, -1):
+            if screen_token(read()) != screen_token(screen):
+                raise Refused('问题已变化')
+            touched = True
+            run('tmux', 'send-keys', '-t', pane['id'], 'M-Down')
+            time.sleep(0.12)
+            screen = read()
+            previous = native_question(screen)
+            if index > 1:
+                if not previous or previous['index'] != index - 1 or previous['count'] != question['count']:
+                    raise Refused('无法核对问题切换')
+            elif previous or 'shift + ← to answer' not in '\n'.join(screen.rstrip().splitlines()[-12:]):
+                raise Refused('无法核对返回结果')
+        return {'ok': True}
+    except Exception:
+        if touched:
+            return {'ok': False, 'uncertain': True, 'error': '返回聊天的操作结果待核对；没有提交任何回答'}
+        raise
+
+
+def submit_question(request, pane, binding):
+    def view(answer=None):
+        target(request)
+        current, check_stream, _ = locate(pane)
+        check_stream.close()
+        if current != binding:
+            raise Refused('会话已变化，回答未提交')
+        screen = clean(run('tmux', 'capture-pane', '-p', '-t', pane['id']))[-14000:]
+        question = native_question(screen, answer)
+        if not question or question['id'] != request.get('questionId'):
+            raise Refused('问题已变化或界面无法确认，请重新查看')
+        return screen, question
+
+    screen, question = view()
+    if request.get('screenToken') != screen_token(screen):
+        raise Refused('问题画面已变化，请核对后重新提交')
+    choice = request.get('choice')
+    if type(choice) is not int or not 0 <= choice < len(question['options']):
+        raise Refused('请选择一个回答')
+    text = request.get('text') if choice == len(question['options']) - 1 else None
+    if text is not None and (not isinstance(text, str) or not text.strip() or len(text.encode()) > 4096 or any(ord(c) < 32 or 127 <= ord(c) <= 159 for c in text)):
+        raise Refused('自由回答请使用单行文字，最多 4 KiB；复杂输入可使用控制面板')
+    if choice == len(question['options']) - 1 and text is None:
+        raise Refused('请输入自由回答')
+    touched, buffer = False, None
+    try:
+        selected = question['selected']
+        while selected != choice:
+            direction = 1 if selected < choice else -1
+            _, current = view()
+            if current['selected'] != selected:
+                raise Refused('选项被其他终端改变')
+            touched = True
+            run('tmux', 'send-keys', '-t', pane['id'], 'Down' if direction > 0 else 'Up')
+            selected += direction
+            time.sleep(0.12)
+            _, current = view()
+            if current['selected'] != selected:
+                raise Refused('无法核对选项切换')
+        if text is not None:
+            buffer = 'nasremote-' + uuid.uuid4().hex
+            run('tmux', 'load-buffer', '-b', buffer, '-', data=text.encode())
+            _, current = view()
+            if current['selected'] != choice:
+                raise Refused('选项已变化')
+            touched = True
+            run('tmux', 'paste-buffer', '-p', '-d', '-b', buffer, '-t', pane['id'])
+            time.sleep(0.2)
+        _, current = view(text)
+        if current['selected'] != choice:
+            raise Refused('选项已变化，未按确认')
+        touched = True
+        run('tmux', 'send-keys', '-t', pane['id'], 'Enter')
+        return {'ok': True, 'submitted': True}
+    except Exception:
+        if touched:
+            return {'ok': False, 'uncertain': True, 'error': '回答操作结果待确认，请核对原会话；不会自动重复提交'}
+        raise
+    finally:
+        if buffer:
+            try:
+                run('tmux', 'delete-buffer', '-b', buffer)
+            except Exception:
+                pass
 
 
 def handle(request):
@@ -352,14 +522,20 @@ def handle(request):
                 screen = clean(run('tmux', 'capture-pane', '-p', '-t', pane['id']))[-14000:]
                 reply['screen'] = screen
                 reply['screenToken'] = screen_token(screen)
-                footer = '\n'.join(screen.splitlines()[-12:])
-                reply['questionHint'] = 'shift + ← to answer' in footer or ('enter submit' in footer and 'ctrl + ] skip' in footer)
+                reply['question'] = native_question(screen)
+                footer = '\n'.join(screen.rstrip().splitlines()[-12:])
+                reply['questionClosed'] = 'shift + ← to answer' in footer
+                reply['questionHint'] = reply['questionClosed'] or ('enter submit' in footer and 'ctrl + ] skip' in footer)
             if request.get('includeSkills'):
                 reply['skills'] = skills(meta.get('cwd', str(Path.home())))
             while reply.get('skills') and len(json.dumps(reply, ensure_ascii=False).encode()) > 250000:
                 reply['skills'].pop()
             target(request)
             return reply
+        if action == 'question_leave' and expected == binding:
+            return leave_question(request, pane, binding)
+        if action == 'question_submit' and expected == binding:
+            return submit_question(request, pane, binding)
         if action in ('key', 'answer') and expected == binding:
             def verify_screen():
                 target(request)

@@ -102,8 +102,16 @@ fun ChatScreen(state: RemoteState, model: RemoteViewModel) {
                 }
             }
         }
-        if (state.questionHint) FilledTonalButton(onClick = { model.openQuestions() }, modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
-            Text("Codex 有问题待回答 · 打开")
+        if (state.questionHint || state.question != null) Surface(
+            color = MaterialTheme.colorScheme.secondaryContainer, shape = RoundedCornerShape(20.dp),
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
+            Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("Codex 需要你的回答", style = MaterialTheme.typography.titleSmall)
+                    Text(state.question?.title ?: "点击查看问题并选择回答", maxLines = 2, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodyMedium)
+                }
+                FilledTonalButton(onClick = { model.openQuestions(state.screenToken) }, enabled = !state.busy) { Text("回答") }
+            }
         }
         LazyColumn(state = list, modifier = Modifier.weight(1f).fillMaxWidth(), contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
             item(key = "history") {
@@ -183,6 +191,7 @@ fun ChatScreen(state: RemoteState, model: RemoteViewModel) {
             TextButton(onClick = { model.draft("/skills"); model.send(); skillsOpen = false }, enabled = writable && state.binding != null && state.chatError == null) { Text("打开 Codex 原菜单") }
         }
     }
+    QuestionSheet(state, model)
     val panelWritable = writable && state.screenToken != null && state.chatError == null
     if (state.panel) ModalBottomSheet(onDismissRequest = { if (!state.busy) model.panel(false) }, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
         Column(Modifier.fillMaxWidth().imePadding().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp).padding(bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {

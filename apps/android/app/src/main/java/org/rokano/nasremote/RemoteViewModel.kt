@@ -22,6 +22,8 @@ import java.security.MessageDigest
 
 data class ChatItem(val id: String, val role: String, val text: String, val phase: String = "", val offset: Long = 0)
 data class SkillOption(val name: String, val description: String)
+data class Question(val id: String, val title: String, val index: Int, val count: Int,
+    val options: List<String>, val previous: Boolean, val next: Boolean, val freeText: Boolean)
 private class InputRejected(message: String) : Exception(message)
 
 data class RemoteState(
@@ -51,6 +53,11 @@ data class RemoteState(
     val answerDraft: String = "",
     val screenToken: String? = null,
     val questionHint: Boolean = false,
+    val question: Question? = null,
+    val questionClosed: Boolean = false,
+    val questionsOpen: Boolean = false,
+    val questionChoice: Int? = null,
+    val answerQuestion: String = "",
     val restoreAnchor: String = "",
     val restoreOffset: Int = 0,
     val seen: String = "",
@@ -66,6 +73,7 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
     private val memos = linkedMapOf<String, SessionMemo>()
     private val cached = linkedMapOf<String, List<ChatItem>>()
     private val cursors = mutableMapOf<String, Long>()
+    private val questionDrafts = linkedMapOf<String, Pair<Int?, String>>()
     private var selection = 0
     private var interaction = 0
     private var recoveryLost = false
@@ -160,7 +168,7 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
         selection++
         loadingMemo = restored
         val prior = restored ?: memos.values.lastOrNull { it.profile == profileId() && it.pane == pane.identity }
-        mutable.update { it.copy(selected = pane, output = emptyList(), message = null, draft = drafts[pane.identity].orEmpty(), terminal = terminal || !pane.canWrite, panel = false, binding = null, messages = emptyList(), skills = emptyList(), chatError = null, historyBefore = null, activity = "unknown", loadingHistory = false, delivery = "", answerDraft = "", screenToken = null, questionHint = false, restoreAnchor = "", restoreOffset = 0, seen = "", catchingUp = false, uncertain = (prior?.uncertain ?: false) || recoveryLost) }
+        mutable.update { it.copy(selected = pane, output = emptyList(), message = null, draft = drafts[pane.identity].orEmpty(), terminal = terminal || !pane.canWrite, panel = false, binding = null, messages = emptyList(), skills = emptyList(), chatError = null, historyBefore = null, activity = "unknown", loadingHistory = false, delivery = "", answerDraft = "", screenToken = null, questionHint = false, questionClosed = false, question = null, questionsOpen = false, questionChoice = null, answerQuestion = "", restoreAnchor = "", restoreOffset = 0, seen = "", catchingUp = false, uncertain = (prior?.uncertain ?: false) || recoveryLost) }
         startPolling()
     }
     fun back() {
@@ -204,7 +212,7 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
         val key = memoKey(binding)
         val prior = memos[key]
         val note = (prior ?: SessionMemo(profileId(), pane.identity, binding, pane.session)).copy(
-            draft = s.draft, answerDraft = s.answerDraft, uncertain = s.uncertain || s.busy,
+            draft = s.draft, answerDraft = s.answerDraft, answerQuestion = s.answerQuestion, uncertain = s.uncertain || s.busy,
             delivery = if (s.busy) "uncertain" else s.delivery)
         memos.remove(key)
         memos[key] = note
@@ -228,18 +236,48 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
             }
         }
     }
-    fun openQuestions() { panel(true) }
+    fun openQuestions(screenToken: String?) {
+        mutable.update { it.copy(questionsOpen = true) }
+        if (state.value.question == null && state.value.questionClosed) {
+            control("key", key = RemoteKey.ShiftLeft, screenToken = screenToken, native = true)
+        }
+    }
+    fun closeQuestions() { if (!state.value.busy) mutable.update { it.copy(questionsOpen = false) } }
+    fun deferQuestions(screenToken: String?) {
+        if (state.value.question == null) closeQuestions()
+        else control("question_leave", screenToken = screenToken, native = true)
+    }
+    fun chooseAnswer(index: Int) { if (!state.value.busy) mutable.update { it.copy(questionChoice = index) } }
+    fun questionPage(next: Boolean, screenToken: String?) {
+        control("key", key = if (next) RemoteKey.ShiftLeft else RemoteKey.AltDown, screenToken = screenToken, native = true)
+    }
+    fun submitAnswer(question: Question, choice: Int, text: String, screenToken: String?) {
+        val s = state.value
+        val pane = s.selected ?: return
+        val binding = s.binding ?: return
+        if (screenToken == null || s.question?.id != question.id) return
+        write(clearAnswer = true, successMessage = "回答已提交", rejectionPanel = false) { remote, _ ->
+            val command = request(pane, "question_submit", binding).put("screenToken", screenToken)
+                .put("questionId", question.id).put("choice", choice)
+            if (choice == question.options.lastIndex) command.put("text", text)
+            val result = JSONObject(remote.bridge(command.toString()))
+            if (!result.optBoolean("ok")) {
+                val reason = result.optString("error", "回答未提交")
+                if (result.optBoolean("uncertain")) error(reason) else throw InputRejected(reason)
+            }
+        }
+    }
     fun fillAnswer(screenToken: String?) {
         val s = state.value
         if (s.answerDraft.isBlank()) return
         control("answer", text = s.answerDraft, screenToken = screenToken)
     }
-    private fun control(action: String, key: RemoteKey? = null, text: String? = null, screenToken: String?) {
+    private fun control(action: String, key: RemoteKey? = null, text: String? = null, screenToken: String?, native: Boolean = false) {
         val s = state.value
         val pane = s.selected ?: return
         val binding = s.binding ?: return
         val token = screenToken ?: return
-        write(clearAnswer = action == "answer") { remote, _ ->
+        write(closeQuestions = action == "question_leave", clearAnswer = action == "answer", successMessage = if (native) null else "已发送终端操作，请核对原界面。", rejectionPanel = !native) { remote, _ ->
             val command = request(pane, action, binding).put("screenToken", token)
             key?.let { command.put("key", it.tmuxName) }
             text?.let { command.put("text", it) }
@@ -253,7 +291,7 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
     fun terminal(value: Boolean) {
         if (!state.value.busy) mutable.update { it.copy(terminal = value, panel = false) }
     }
-    fun panel(value: Boolean) { mutable.update { it.copy(panel = value) } }
+    fun panel(value: Boolean) { mutable.update { it.copy(panel = value, questionsOpen = if (value) false else it.questionsOpen) } }
     fun send() {
         val s = state.value
         val pane = s.selected ?: return
@@ -262,6 +300,10 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
         try { TmuxProtocol.validatePaste(text) }
         catch (e: IllegalArgumentException) { mutable.update { it.copy(message = e.message) }; return }
         if (s.chatError != null) return
+        if (s.question != null) {
+            mutable.update { it.copy(questionsOpen = true, message = "请提交当前回答，或点“稍后回答”返回聊天。") }
+            return
+        }
         write(clearDraft = true) { remote, _ ->
             val result = JSONObject(remote.bridge(request(pane, "send", binding).put("text", text).toString()))
             if (!result.optBoolean("ok")) {
@@ -321,7 +363,7 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
         if (!state.value.terminal && state.value.binding != null) control("key", key, screenToken = screenToken)
         else write { remote, pane -> remote.key(pane, key) }
     }
-    private fun write(clearDraft: Boolean = false, clearAnswer: Boolean = false, action: (SshTmuxClient, Pane) -> Unit) {
+    private fun write(clearDraft: Boolean = false, clearAnswer: Boolean = false, successMessage: String? = "已发送终端操作，请核对原界面。", rejectionPanel: Boolean = true, closeQuestions: Boolean = false, action: (SshTmuxClient, Pane) -> Unit) {
         val s = state.value
         val pane = s.selected ?: return
         val remote = client ?: return
@@ -341,13 +383,13 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
                 } }
                 if (token == epoch) {
                     if (clearDraft) drafts.remove(pane.identity)
-                    mutable.update { it.copy(busy = false, draft = if (clearDraft) "" else it.draft, message = if (clearDraft) null else "已发送终端操作，请核对原界面。", delivery = if (clearDraft) "submitted" else it.delivery, screenToken = null, answerDraft = if (clearAnswer) "" else it.answerDraft) }
+                    mutable.update { it.copy(busy = false, questionsOpen = if (closeQuestions) false else it.questionsOpen, draft = if (clearDraft) "" else it.draft, message = if (clearDraft) null else successMessage, delivery = if (clearDraft) "submitted" else it.delivery, screenToken = null, answerDraft = if (clearAnswer) "" else it.answerDraft) }
                     rememberSession()
                 }
             } catch (e: Exception) {
                 if (e is CancellationException) throw e
                 if (token == epoch && e is InputRejected) {
-                    mutable.update { it.copy(busy = false, message = e.message, panel = true, screenToken = null, delivery = if (clearDraft) "rejected" else it.delivery) }
+                    mutable.update { it.copy(busy = false, message = e.message, panel = rejectionPanel, screenToken = null, delivery = if (clearDraft) "rejected" else it.delivery) }
                     rememberSession()
                 } else if (token == epoch) {
                     disconnect("发送结果待确认。请重新连接并查看原窗格，确认后再操作。")
@@ -388,6 +430,20 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
                     val binding = if (valid) chat.getString("binding") else null
                     val initial = snapshot.binding == null && binding != null
                     val memo = if (initial) memos[memoKey(binding)] else null
+                    val question = if (valid) chat.optJSONObject("question")?.let { q ->
+                        val options = q.getJSONArray("options")
+                        Question(q.getString("id"), q.getString("title"), q.getInt("index"), q.getInt("count"),
+                            (0 until options.length()).map { options.getString(it) }, q.optBoolean("previous"), q.optBoolean("next"), q.optBoolean("freeText"))
+                    } else null
+                    val beforeQuestion = state.value
+                    val changedQuestion = question != null && question.id != beforeQuestion.answerQuestion
+                    if (changedQuestion && beforeQuestion.answerQuestion.isNotBlank()) {
+                        questionDrafts[memoKey(binding!!) + ":" + beforeQuestion.answerQuestion] = beforeQuestion.questionChoice to beforeQuestion.answerDraft
+                        while (questionDrafts.size > 32) questionDrafts.remove(questionDrafts.keys.first())
+                    }
+                    val questionDraft = question?.let { questionDrafts[memoKey(binding!!) + ":" + it.id] }
+                    val restoredAnswer = if (initial) memo?.answerDraft.orEmpty() else beforeQuestion.answerDraft
+                    val restoredAnswerId = if (initial) memo?.answerQuestion.orEmpty() else beforeQuestion.answerQuestion
                     // A stale persisted binding never silently reconnects to a replacement executor.
                     if (valid) cursors[memoKey(binding!!)] = chat.getLong("next")
                     mutable.update {
@@ -401,10 +457,14 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
                                 chatError = if (chat != null && !valid) chat.optString("error") else null,
                                 screenToken = if (valid && !it.busy && operation == interaction) chat.optString("screenToken") else null,
                                 questionHint = valid && chat.optBoolean("questionHint"),
+                                question = question,
+                                questionClosed = valid && chat.optBoolean("questionClosed"),
+                                questionChoice = if (question == null) null else if (changedQuestion) questionDraft?.first else it.questionChoice,
+                                answerQuestion = question?.id ?: restoredAnswerId,
                                 activity = if (valid && chat.optString("status") != "unknown") chat.optString("status") else it.activity,
                                 historyBefore = it.historyBefore ?: if (valid) chat.getLong("before") else null,
                                 draft = if (initial && memo != null) memo.draft else it.draft,
-                                answerDraft = if (initial && memo != null) memo.answerDraft else it.answerDraft,
+                                answerDraft = if (question != null && question.id != restoredAnswerId) questionDraft?.second.orEmpty() else restoredAnswer,
                                 uncertain = if (initial) (memo?.uncertain ?: false) || it.uncertain || recoveryLost else it.uncertain,
                                 delivery = if (initial) memo?.delivery.orEmpty() else it.delivery,
                                 restoreAnchor = if (initial) memo?.anchor.orEmpty() else it.restoreAnchor,
@@ -447,7 +507,7 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
         disconnect()
         importedKey?.fill(0); importedKey = null
         drafts.clear()
-        persistJob?.cancel(); memos.clear(); cached.clear(); cursors.clear()
+        persistJob?.cancel(); memos.clear(); cached.clear(); cursors.clear(); questionDrafts.clear()
         mutable.update { it.copy(busy = true, hasKey = false, draft = "") }
         viewModelScope.launch {
             try {
