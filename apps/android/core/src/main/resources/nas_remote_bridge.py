@@ -127,27 +127,43 @@ def clean(text):
     return ''.join(c for c in text if c in '\n\t' or (ord(c) >= 32 and not 127 <= ord(c) <= 159 and c not in '\u202a\u202b\u202c\u202d\u202e\u2066\u2067\u2068\u2069'))
 
 
-def public_messages(stream, before=None):
+def public_messages(stream, before=None, after=None, details=False):
     end = os.fstat(stream.fileno()).st_size
     if before is not None:
         if type(before) is not int or not 0 <= before <= end:
             raise Refused("历史位置无效")
         end = before
-    start = max(0, end - MAX_READ)
+    size = end
+    if after is not None:
+        if type(after) is not int or not 0 <= after <= end:
+            raise Refused("增量位置无效，记录可能已变化，请重新打开会话")
+        start, end = after, min(end, after + MAX_READ)
+    else:
+        start = max(0, end - MAX_READ)
     stream.seek(start)
     data = stream.read(end - start)
-    if start:
+    if start and after is None:
         newline = data.find(b'\n')
         if newline < 0:
-            return [], 'unknown', start  # A record larger than the read limit is skipped.
+            if details:
+                return {'messages': [], 'status': 'unknown', 'before': start, 'next': end, 'more': end < size, 'skipped': True}
+            return [], 'unknown', start
         start += newline + 1
         data = data[newline + 1:]
     cursor = start
     messages, offsets, status = [], [], 'unknown'
+    consumed = start
+    skipped = False
     for raw in data.splitlines(keepends=True):
         offset = cursor
         cursor += len(raw)
-        if not raw.endswith(b'\n') or len(raw) > MAX_READ:
+        if not raw.endswith(b'\n'):
+            if len(data) == MAX_READ and after is not None and consumed == start:
+                raise Refused('单条会话记录超过读取上限，请用终端核对或重新打开聊天')
+            break
+        consumed = cursor
+        if len(raw) > MAX_READ:
+            skipped = True
             continue
         try:
             event = json.loads(raw)
@@ -179,8 +195,12 @@ def public_messages(stream, before=None):
             mid = item.get('id')
             if not isinstance(mid, str) or not mid:
                 continue
-            messages.append({'id': mid[:128], 'role': role, 'text': text, 'phase': phase or ''})
+            messages.append({'id': mid[:128], 'role': role, 'text': text, 'phase': phase or '', 'offset': offset})
             offsets.append(offset)
+            if after is not None and (len(messages) > 80 or len(json.dumps(messages, ensure_ascii=False).encode()) > 180000):
+                messages.pop()
+                consumed = offset
+                break
         except (ValueError, TypeError, KeyError):
             continue
     # Bounded network / UI memory. Older history remains reachable by byte pagination.
@@ -190,6 +210,8 @@ def public_messages(stream, before=None):
         removed += 1
     if removed:
         start = offsets[removed]
+    if details:
+        return {'messages': messages, 'status': status, 'before': start, 'next': consumed, 'more': consumed < size and consumed > (after if after is not None else start), 'skipped': skipped}
     return messages, status, start
 
 
@@ -306,6 +328,15 @@ def deliver(request, pane, binding):
             pass
 
 
+def screen_token(screen):
+    # While an async question is open, background progress can animate above it.
+    # Compare the complete question area (including choices and footer), not that spinner.
+    marker = '• Queued follow-up inputs'
+    if marker in screen:
+        screen = screen[screen.rfind(marker):]
+    return hashlib.sha256(screen.encode()).hexdigest()
+
+
 def handle(request):
     pane = target(request)
     binding, stream, meta = locate(pane)
@@ -315,12 +346,59 @@ def handle(request):
             raise Refused('运行会话已变化，请返回列表重新打开')
         action = request.get('action')
         if action == 'snapshot':
-            messages, status, before = public_messages(stream, request.get('before'))
-            reply = {'ok': True, 'binding': binding, 'messages': messages, 'status': status, 'before': before}
+            reply = public_messages(stream, request.get('before'), request.get('after'), details=True)
+            reply.update(ok=True, binding=binding, threadId=meta['id'])
+            if request.get('screen'):
+                screen = clean(run('tmux', 'capture-pane', '-p', '-t', pane['id']))[-14000:]
+                reply['screen'] = screen
+                reply['screenToken'] = screen_token(screen)
+                footer = '\n'.join(screen.splitlines()[-12:])
+                reply['questionHint'] = 'shift + ← to answer' in footer or ('enter submit' in footer and 'ctrl + ] skip' in footer)
             if request.get('includeSkills'):
                 reply['skills'] = skills(meta.get('cwd', str(Path.home())))
+            while reply.get('skills') and len(json.dumps(reply, ensure_ascii=False).encode()) > 250000:
+                reply['skills'].pop()
             target(request)
             return reply
+        if action in ('key', 'answer') and expected == binding:
+            def verify_screen():
+                target(request)
+                current, check_stream, _ = locate(pane)
+                check_stream.close()
+                if current != binding:
+                    raise Refused('会话已变化，未操作')
+                screen = clean(run('tmux', 'capture-pane', '-p', '-t', pane['id']))[-14000:]
+                if request.get('screenToken') != screen_token(screen):
+                    raise Refused('终端画面已变化，请核对新画面后重新操作；没有发送按键')
+            verify_screen()
+            buffer, touched = None, False
+            try:
+                if action == 'key':
+                    key = request.get('key')
+                    if key not in ('Enter', 'Escape', 'Up', 'Down', 'Left', 'Right', 'S-Left', 'S-Right', 'Tab', 'BTab', 'Space', 'BSpace', 'C-u', 'C-c', 'M-Down', 'C-]'):
+                        raise Refused('按键不受支持')
+                    touched = True
+                    run('tmux', 'send-keys', '-t', pane['id'], key)
+                else:
+                    text = request.get('text')
+                    if not isinstance(text, str) or not text.strip() or len(text.encode()) > 16384 or any((ord(c) < 32 and c not in '\n\t') or 127 <= ord(c) <= 159 for c in text):
+                        raise Refused('回答内容无效或超过 16 KiB')
+                    buffer = 'nasremote-' + uuid.uuid4().hex
+                    run('tmux', 'load-buffer', '-b', buffer, '-', data=text.encode())
+                    verify_screen()
+                    touched = True
+                    run('tmux', 'paste-buffer', '-p', '-d', '-b', buffer, '-t', pane['id'])
+                return {'ok': True}  # Answer paste never implicitly presses Enter.
+            except Exception:
+                if touched:
+                    return {'ok': False, 'uncertain': True, 'error': '操作结果待确认，请重连核对；不会自动重试'}
+                raise
+            finally:
+                if buffer:
+                    try:
+                        run('tmux', 'delete-buffer', '-b', buffer)
+                    except Exception:
+                        pass
         if action == 'send' and expected == binding:
             return deliver(request, pane, binding)
         raise Refused('请求不受支持或会话未关联')

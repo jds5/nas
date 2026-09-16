@@ -25,7 +25,7 @@ systemctl --user disable --now nas-app-download.service
 ```bash
 python3 apps/android/distribution/serve.py \
   --bind 192.168.50.33 --allow 192.168.50.0/24 --port 8765 \
-  --apk apps/android/distribution/build/nas-remote-0.2.1.apk --version 0.2.1
+  --apk apps/android/distribution/build/nas-remote-0.3.0.apk --version 0.3.0
 ```
 
 ## 更新安装包
@@ -36,9 +36,9 @@ python3 apps/android/distribution/serve.py \
 mkdir -p apps/android/distribution/build
 apksigner sign --ks "$HOME/.android/debug.keystore" --ks-key-alias androiddebugkey \
   --ks-pass pass:android --key-pass pass:android \
-  --out apps/android/distribution/build/nas-remote-0.2.1.apk \
+  --out apps/android/distribution/build/nas-remote-0.3.0.apk \
   apps/android/app/build/outputs/apk/release/app-release-unsigned.apk
-apksigner verify --verbose apps/android/distribution/build/nas-remote-0.2.1.apk
+apksigner verify --verbose apps/android/distribution/build/nas-remote-0.3.0.apk
 ```
 
 `android` 是标准测试 keystore 的默认口令，不应用于正式发布密钥。更新版本时同步 App versionCode/versionName、服务参数中的文件和版本号，然后安装 unit、执行 `systemctl --user daemon-reload` 和 `restart`。服务运行中不会自动切换文件，避免页面校验值与下载内容不一致。

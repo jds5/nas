@@ -2,9 +2,13 @@ package org.rokano.nasremote.ui
 
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.gestures.animateScrollBy
+import androidx.compose.foundation.gestures.scrollBy
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
@@ -13,15 +17,13 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.SpanStyle
-import androidx.compose.ui.text.buildAnnotatedString
-import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
-import org.rokano.nasremote.ChatItem
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.delay
 import org.rokano.nasremote.RemoteState
 import org.rokano.nasremote.RemoteViewModel
 import org.rokano.nasremote.core.RemoteKey
@@ -41,18 +43,39 @@ fun ChatScreen(state: RemoteState, model: RemoteViewModel) {
     var skillsOpen by remember(pane.identity) { mutableStateOf(false) }
     var skillQuery by remember { mutableStateOf("") }
     var interrupt by remember { mutableStateOf(false) }
+    var skip by remember { mutableStateOf(false) }
+    var confirmationToken by remember { mutableStateOf<String?>(null) }
     val writable = state.connected && !state.busy && !state.uncertain
     val canSend = writable && state.binding != null && state.chatError == null && state.draft.isNotBlank()
-    val nearBottom by remember { derivedStateOf { !list.canScrollForward ||
-        (list.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0) >= list.layoutInfo.totalItemsCount - 2 } }
-    var previousLast by remember(pane.identity) { mutableStateOf<String?>(null) }
-    var previousSize by remember(pane.identity) { mutableIntStateOf(0) }
-    LaunchedEffect(state.messages.lastOrNull()?.id) {
-        val firstLoad = previousLast == null
-        val wasNearBottom = (list.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0) >= previousSize - 1
-        previousSize = state.messages.size
-        previousLast = state.messages.lastOrNull()?.id
-        if ((firstLoad || wasNearBottom) && state.messages.isNotEmpty()) list.animateScrollToItem(state.messages.size)
+    val nearBottom by remember { derivedStateOf { !list.canScrollForward } }
+    var restored by remember { mutableStateOf(false) }
+    var following by remember { mutableStateOf(true) }
+    val currentState by rememberUpdatedState(state)
+    LaunchedEffect(state.binding, state.messages.lastOrNull()?.id) {
+        if (state.binding == null || state.messages.isEmpty()) return@LaunchedEffect
+        if (!restored) {
+            val anchor = state.messages.indexOfFirst { it.id == state.restoreAnchor }
+            if (anchor >= 0) list.scrollToItem(anchor + 1, state.restoreOffset)
+            else list.showLatest(state.messages.size, animate = false)
+            following = !list.canScrollForward
+            restored = true
+        } else if (following && !list.isScrollInProgress) list.showLatest(state.messages.size)
+        if (!list.canScrollForward) state.messages.getOrNull((list.firstVisibleItemIndex - 1).coerceAtLeast(0))?.let {
+            model.reading(it.id, list.firstVisibleItemScrollOffset, true)
+        }
+    }
+    LaunchedEffect(restored) {
+        if (!restored) return@LaunchedEffect
+        snapshotFlow { Triple(list.firstVisibleItemIndex, list.firstVisibleItemScrollOffset, list.canScrollForward) }
+            .distinctUntilChanged().collect { (index, offset, forward) ->
+                if (list.isScrollInProgress) following = !forward
+                val messages = currentState.messages
+                val item = messages.getOrNull((index - 1).coerceAtLeast(0))
+                if (item != null) model.reading(item.id, offset, !forward)
+            }
+    }
+    val unread = if (state.seen.isBlank()) 0 else state.messages.indexOfFirst { it.id == state.seen }.let {
+        if (it >= 0) state.messages.size - it - 1 else state.messages.size
     }
     val prefix = state.draft.takeIf { it.startsWith('/') && !it.contains(' ') && !it.contains('\n') }?.drop(1)
     Column(Modifier.fillMaxSize()) {
@@ -61,6 +84,7 @@ fun ChatScreen(state: RemoteState, model: RemoteViewModel) {
                 Text(pane.session, style = MaterialTheme.typography.titleLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Text(when {
                     state.chatError != null -> "会话读取需要处理"
+                    state.catchingUp -> "正在补读断线期间的消息…"
                     state.binding == null -> "正在关联原会话…"
                     state.activity == "working" -> "Codex 正在处理"
                     state.activity == "idle" -> "本轮已结束"
@@ -78,6 +102,9 @@ fun ChatScreen(state: RemoteState, model: RemoteViewModel) {
                 }
             }
         }
+        if (state.questionHint) FilledTonalButton(onClick = { model.openQuestions() }, modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
+            Text("Codex 有问题待回答 · 打开")
+        }
         LazyColumn(state = list, modifier = Modifier.weight(1f).fillMaxWidth(), contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
             item(key = "history") {
                 if ((state.historyBefore ?: 0) > 0) TextButton(onClick = model::loadHistory, enabled = !state.loadingHistory && state.messages.size < 300) {
@@ -86,15 +113,29 @@ fun ChatScreen(state: RemoteState, model: RemoteViewModel) {
                 if (state.messages.isEmpty() && state.binding != null) Text("暂未读到公开消息，可继续向 Codex 提问。", color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             items(state.messages, key = { it.id }) { message ->
-                Message(message, Modifier.animateItem())
+                Column {
+                    if (state.seen.isNotBlank() && state.messages.getOrNull(state.messages.indexOf(message) - 1)?.id == state.seen) {
+                        Text("以下为未读消息", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
+                        HorizontalDivider(Modifier.padding(vertical = 8.dp))
+                    }
+                    Message(message)
+                }
             }
         }
         AnimatedVisibility(!nearBottom && state.messages.isNotEmpty()) {
-            TextButton(onClick = { scope.launch { list.animateScrollToItem(state.messages.size) } }, modifier = Modifier.fillMaxWidth()) { Text("↓ 最新消息") }
+            TextButton(onClick = { scope.launch { following = true; list.showLatest(state.messages.size) } }, modifier = Modifier.fillMaxWidth()) { Text(if (unread > 0) "↓ $unread 条未读 · 最新消息" else "↓ 最新消息") }
         }
         if (state.uncertain) FilledTonalButton(onClick = { model.panel(true) }, modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp)) { Text("核对上次发送结果") }
         Surface(tonalElevation = 2.dp, shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp)) {
             Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                if (state.delivery.isNotBlank()) Text(when (state.delivery) {
+                    "sending" -> "正在发送…"
+                    "submitted" -> "已提交到 Codex 输入端"
+                    "uncertain" -> "发送结果待核对，未自动重发"
+                    "rejected" -> "未发送，草稿已保留"
+                    "reviewed" -> "已人工核对上次操作"
+                    else -> ""
+                }, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 if (prefix != null) {
                     LazyColumn(Modifier.heightIn(max = 168.dp)) {
                         items(commands.filter { it.first.startsWith(prefix) }) { (command, description) ->
@@ -109,7 +150,7 @@ fun ChatScreen(state: RemoteState, model: RemoteViewModel) {
                     }
                 }
                 Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedTextField(state.draft, model::draft, enabled = !state.busy, modifier = Modifier.weight(1f), shape = RoundedCornerShape(24.dp),
+                    OutlinedTextField(state.draft, model::draft, enabled = !state.busy && state.binding != null, modifier = Modifier.weight(1f), shape = RoundedCornerShape(24.dp),
                         placeholder = { Text("向 Codex 发送消息…") }, minLines = 1, maxLines = 6)
                     Button(onClick = {
                         if (state.draft.trim() == "/skills") { skillsOpen = true; model.draft("") }
@@ -142,79 +183,62 @@ fun ChatScreen(state: RemoteState, model: RemoteViewModel) {
             TextButton(onClick = { model.draft("/skills"); model.send(); skillsOpen = false }, enabled = writable && state.binding != null && state.chatError == null) { Text("打开 Codex 原菜单") }
         }
     }
-    val panelWritable = writable && state.output.isNotEmpty()
-    if (state.panel) ModalBottomSheet(onDismissRequest = { model.panel(false) }) {
-        Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp).padding(bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("Codex 控制面板", style = MaterialTheme.typography.titleLarge)
-            Text("菜单、权限确认与异常输入在这里处理。共享电脑端光标，请核对后操作。", style = MaterialTheme.typography.bodySmall)
+    val panelWritable = writable && state.screenToken != null && state.chatError == null
+    if (state.panel) ModalBottomSheet(onDismissRequest = { if (!state.busy) model.panel(false) }, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
+        Column(Modifier.fillMaxWidth().imePadding().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp).padding(bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("回答与控制", style = MaterialTheme.typography.titleLarge)
+            Text("先核对原界面，再选择选项或填入回答；与电脑共享光标。", style = MaterialTheme.typography.bodySmall)
             Surface(color = MaterialTheme.colorScheme.surfaceContainerHighest, shape = RoundedCornerShape(16.dp)) {
                 val scroll = rememberScrollState()
-                LaunchedEffect(state.output) { if (!scroll.isScrollInProgress) scroll.scrollTo(scroll.maxValue) }
+                LaunchedEffect(Unit) { delay(100); scroll.scrollTo(scroll.maxValue) }
                 SelectionContainer {
-                    Text(state.output.takeLast(80).joinToString("\n").ifBlank { "正在读取…" }, fontFamily = FontFamily.Monospace,
-                        style = MaterialTheme.typography.bodySmall, modifier = Modifier.fillMaxWidth().heightIn(max = 280.dp).verticalScroll(scroll).padding(12.dp))
+                    Text(state.output.joinToString("\n").ifBlank { "正在读取…" }, fontFamily = FontFamily.Monospace,
+                        style = MaterialTheme.typography.bodySmall, softWrap = false,
+                        modifier = Modifier.fillMaxWidth().heightIn(max = 260.dp).verticalScroll(scroll).horizontalScroll(rememberScrollState()).padding(12.dp))
                 }
             }
-            if (state.uncertain) Button(onClick = model::acknowledge, enabled = state.output.isNotEmpty()) { Text("已核对结果，恢复操作") }
+            if (state.uncertain) Button(onClick = model::acknowledge, enabled = state.screenToken != null) { Text("已核对结果，恢复操作") }
+            Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())) {
+                FilledTonalButton(onClick = { model.key(RemoteKey.ShiftLeft, state.screenToken) }, enabled = panelWritable) { Text("打开 / 下一题 ⇧←") }
+                TextButton(onClick = { model.key(RemoteKey.AltDown, state.screenToken) }, enabled = panelWritable) { Text("上一题 / 返回 Alt↓") }
+            }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
-                TextButton(onClick = { model.key(RemoteKey.Up) }, enabled = panelWritable) { Text("↑") }
-                TextButton(onClick = { model.key(RemoteKey.Down) }, enabled = panelWritable) { Text("↓") }
-                TextButton(onClick = { model.key(RemoteKey.Tab) }, enabled = panelWritable) { Text("Tab") }
-                TextButton(onClick = { model.key(RemoteKey.Escape) }, enabled = panelWritable) { Text("Esc") }
-                Button(onClick = { model.key(RemoteKey.Enter) }, enabled = panelWritable) { Text("确认") }
+                TextButton(onClick = { model.key(RemoteKey.Up, state.screenToken) }, enabled = panelWritable) { Text("↑") }
+                TextButton(onClick = { model.key(RemoteKey.Down, state.screenToken) }, enabled = panelWritable) { Text("↓") }
+                TextButton(onClick = { model.key(RemoteKey.Left, state.screenToken) }, enabled = panelWritable) { Text("←") }
+                TextButton(onClick = { model.key(RemoteKey.Right, state.screenToken) }, enabled = panelWritable) { Text("→") }
+                Button(onClick = { model.key(RemoteKey.Enter, state.screenToken) }, enabled = panelWritable) { Text("确认 ↵") }
+            }
+            OutlinedTextField(state.answerDraft, model::answerDraft, enabled = !state.busy,
+                modifier = Modifier.fillMaxWidth(), minLines = 1, maxLines = 4,
+                label = { Text("自由回答 / 菜单输入") }, supportingText = { Text("需要时先选择 Other。填入后核对上方画面，再点确认。") })
+            FilledTonalButton(onClick = { model.fillAnswer(state.screenToken) }, enabled = panelWritable && state.answerDraft.isNotBlank(), modifier = Modifier.fillMaxWidth()) { Text("填入回答（不自动回车）") }
+            Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())) {
+                listOf("Tab" to RemoteKey.Tab, "⇧Tab" to RemoteKey.BackTab, "空格" to RemoteKey.Space,
+                    "退格" to RemoteKey.Backspace, "清行" to RemoteKey.ClearLine, "Esc" to RemoteKey.Escape).forEach { (label, key) ->
+                    TextButton(onClick = { model.key(key, state.screenToken) }, enabled = panelWritable) { Text(label) }
+                }
             }
             Row {
-                TextButton(onClick = { interrupt = true }, enabled = panelWritable) { Text("中断…") }
+                TextButton(onClick = { confirmationToken = state.screenToken; skip = true }, enabled = panelWritable) { Text("跳过此题…") }
+                TextButton(onClick = { confirmationToken = state.screenToken; interrupt = true }, enabled = panelWritable) { Text("中断…") }
                 TextButton(onClick = { model.terminal(true) }, enabled = !state.busy) { Text("切换终端模式") }
             }
         }
     }
+    if (skip) AlertDialog(onDismissRequest = { skip = false }, title = { Text("跳过当前问题？") },
+        text = { Text("向当前界面发送 Ctrl+]。请确认画面中确实是要跳过的问题。") },
+        confirmButton = { TextButton(onClick = { skip = false; model.key(RemoteKey.SkipQuestion, confirmationToken) }) { Text("跳过") } },
+        dismissButton = { TextButton(onClick = { skip = false }) { Text("取消") } })
     if (interrupt) AlertDialog(onDismissRequest = { interrupt = false }, title = { Text("中断当前操作？") }, text = { Text("向 ${pane.session} 发送 Ctrl-C，可能取消正在执行的操作。") },
-        confirmButton = { TextButton(onClick = { interrupt = false; model.key(RemoteKey.Interrupt) }) { Text("发送 Ctrl-C") } },
+        confirmButton = { TextButton(onClick = { interrupt = false; model.key(RemoteKey.Interrupt, confirmationToken) }) { Text("发送 Ctrl-C") } },
         dismissButton = { TextButton(onClick = { interrupt = false }) { Text("取消") } })
 }
 
-@Composable
-private fun Message(message: ChatItem, modifier: Modifier = Modifier) {
-    val user = message.role == "user"
-    Column(modifier.fillMaxWidth(), horizontalAlignment = if (user) Alignment.End else Alignment.Start) {
-        Text(when { user -> "你"; message.role == "command" -> "NAS 命令"; message.phase == "commentary" -> "Codex · 进展"; else -> "Codex" },
-            style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(bottom = 6.dp))
-        Surface(color = if (user) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerLow,
-            shape = RoundedCornerShape(20.dp), modifier = Modifier.widthIn(max = 720.dp)) {
-            SelectionContainer {
-                // Native text only: no WebView, remote image fetch, HTML or executable links.
-                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    val parts = remember(message.text) { message.text.split("```") }
-                    parts.forEachIndexed { index, part ->
-                        if (part.isNotBlank()) {
-                            if (index % 2 == 1) Surface(color = MaterialTheme.colorScheme.surfaceContainerHighest, shape = RoundedCornerShape(8.dp)) {
-                                Text(part.trim(), fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(12.dp))
-                            } else Text(remember(part) { readableMarkdown(part.trim()) }, style = MaterialTheme.typography.bodyLarge)
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-/** Small, non-interactive Markdown subset. Unknown syntax stays visible as text. */
-private fun readableMarkdown(source: String) = buildAnnotatedString {
-    val token = Regex("\\*\\*(.+?)\\*\\*|`([^`]+)`")
-    source.lines().forEachIndexed { index, line ->
-        if (index > 0) append("\n")
-        val heading = Regex("^#{1,6} +").find(line)
-        val body = if (heading != null) line.drop(heading.value.length) else line
-        withStyle(SpanStyle(fontWeight = if (heading != null) FontWeight.SemiBold else FontWeight.Normal)) {
-            var position = 0
-            token.findAll(body).forEach { match ->
-                append(body.substring(position, match.range.first))
-                if (match.value.startsWith('`')) withStyle(SpanStyle(fontFamily = FontFamily.Monospace)) { append(match.groupValues[2]) }
-                else withStyle(SpanStyle(fontWeight = FontWeight.Bold)) { append(match.groupValues[1]) }
-                position = match.range.last + 1
-            }
-            append(body.substring(position))
-        }
-    }
+/** Align the end of a tall last message too, not just its first line. */
+private suspend fun LazyListState.showLatest(index: Int, animate: Boolean = true) {
+    if (animate) animateScrollToItem(index) else scrollToItem(index)
+    val last = layoutInfo.visibleItemsInfo.lastOrNull { it.index == index } ?: return
+    val remainder = (last.offset + last.size - layoutInfo.viewportEndOffset + layoutInfo.afterContentPadding).coerceAtLeast(0).toFloat()
+    if (animate) animateScrollBy(remainder) else scrollBy(remainder)
 }

@@ -77,7 +77,7 @@ fun NasRemoteApp(model: RemoteViewModel) {
                     when (destination) {
                         "connection" -> ConnectionScreen(state, model)
                         "panes" -> PanesScreen(state, model)
-                        "chat" -> ChatScreen(state, model)
+                        "chat" -> key(state.selected?.identity) { ChatScreen(state, model) }
                         else -> TerminalScreen(state, model)
                     }
                 }
@@ -134,10 +134,23 @@ private fun ConnectionScreen(state: RemoteState, model: RemoteViewModel) {
             model.connect(ConnectionProfile(host, port.toIntOrNull() ?: 0, user, fingerprint), passphrase)
             passphrase = ""
         }, enabled = state.ready && state.hasKey && !state.busy, modifier = Modifier.fillMaxWidth().height(56.dp)) { Text("连接并查看会话", style = MaterialTheme.typography.titleMedium) }
+        if (state.resumeTitle != null) FilledTonalButton(onClick = {
+            model.connect(ConnectionProfile(host, port.toIntOrNull() ?: 0, user, fingerprint), passphrase, resume = true)
+            passphrase = ""
+        }, enabled = state.ready && state.hasKey && !state.busy, modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp)) {
+            Text("接回 ${state.resumeTitle}", maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text("加密保存草稿", style = MaterialTheme.typography.titleSmall)
+                Text("可选：重启后恢复输入及回答草稿。口令和对话正文不保存。", style = MaterialTheme.typography.bodySmall)
+            }
+            Switch(checked = state.saveDrafts, onCheckedChange = model::saveDrafts, enabled = !state.busy && state.ready)
+        }
         if (state.hasKey || state.message != null) TextButton(onClick = { forget = true }, enabled = !state.busy, modifier = Modifier.align(Alignment.CenterHorizontally)) { Text("清除本机连接资料") }
         Spacer(Modifier.height(20.dp))
     }
-    if (forget) AlertDialog(onDismissRequest = { forget = false }, title = { Text("清除本机资料？") }, text = { Text("移除保存的连接与私钥。不会停止 NAS 上的任务；撤销登录权限仍需在 NAS 删除对应公钥。") }, confirmButton = { TextButton(onClick = { forget = false; model.forget() }) { Text("清除") } }, dismissButton = { TextButton(onClick = { forget = false }) { Text("取消") } })
+    if (forget) AlertDialog(onDismissRequest = { forget = false }, title = { Text("清除本机资料？") }, text = { Text("移除保存的连接、私钥、草稿与阅读位置。不会停止 NAS 上的任务；撤销登录权限仍需在 NAS 删除对应公钥。") }, confirmButton = { TextButton(onClick = { forget = false; model.forget() }) { Text("清除") } }, dismissButton = { TextButton(onClick = { forget = false }) { Text("取消") } })
 }
 
 @Composable
@@ -210,6 +223,10 @@ private fun TerminalScreen(state: RemoteState, model: RemoteViewModel) {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 FilledTonalButton(onClick = model::paste, enabled = writable && state.draft.isNotBlank(), modifier = Modifier.weight(1f).heightIn(min = 48.dp)) { Text("粘贴到窗格") }
                 Button(onClick = { model.key(RemoteKey.Enter) }, enabled = writable, modifier = Modifier.heightIn(min = 48.dp)) { Text("回车") }
+            }
+            Row(Modifier.fillMaxWidth()) {
+                TextButton(onClick = { model.key(RemoteKey.ShiftLeft) }, enabled = writable) { Text("打开 / 下一题 ⇧←") }
+                TextButton(onClick = { model.key(RemoteKey.AltDown) }, enabled = writable) { Text("上一题 / 返回 Alt↓") }
             }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
                 TextButton(onClick = { model.key(RemoteKey.Up) }, enabled = writable) { Text("↑") }

@@ -53,6 +53,14 @@ while True:
                 time.sleep(.1)
                 received=(root/'received-first').read_bytes()
                 self.assertEqual(received, b'\x1b[200~' + request['text'].encode() + b'\x1b[201~\r')
+                for key, sequence in [('S-Left', b'\x1b[1;2D'), ('M-Down', b'\x1b[1;3B'), ('BTab', b'\x1b[Z'), ('C-]', b'\x1d')]:
+                    snapshot = b.handle({'pane': pane, 'action': 'snapshot', 'screen': True})
+                    result = b.handle({'pane': pane, 'binding': binding, 'action': 'key', 'key': key,
+                                       'screenToken': snapshot['screenToken']})
+                    self.assertTrue(result['ok'])
+                    time.sleep(.05)
+                    received += sequence
+                    self.assertEqual((root/'received-first').read_bytes(), received)
                 self.assertFalse((root/'received-second').exists())
                 self.assertFalse((root/'SHOULD_NOT_EXIST').exists())
                 with self.assertRaises(b.Refused): b.handle(dict(request, binding='wrong'))

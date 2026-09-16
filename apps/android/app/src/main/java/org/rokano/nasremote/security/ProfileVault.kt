@@ -17,9 +17,8 @@ import javax.crypto.spec.GCMParameterSpec
 data class StoredProfile(val profile: ConnectionProfile, val key: ByteArray)
 
 /** One encrypted record. No backup, plaintext temporary file, password or transcript storage. */
-class ProfileVault(context: Context) {
-    private val file = AtomicFile(File(context.noBackupFilesDir, "connection.v1"))
-    private val alias = "nas-remote-profile-v1"
+class ProfileVault(context: Context, record: String = "connection.v1", private val alias: String = "nas-remote-profile-v1", private val maxBytes: Int = 131_072) {
+    private val file = AtomicFile(File(context.noBackupFilesDir, record))
     private fun key(): SecretKey {
         val store = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
         (store.getKey(alias, null) as? SecretKey)?.let { return it }
@@ -35,20 +34,22 @@ class ProfileVault(context: Context) {
         val data = JSONObject().put("host", profile.host).put("port", profile.port)
             .put("user", profile.user).put("fingerprint", profile.fingerprint)
             .put("key", Base64.getEncoder().encodeToString(privateKey)).toString().toByteArray()
-        try {
-            val cipher = Cipher.getInstance("AES/GCM/NoPadding")
-            cipher.init(Cipher.ENCRYPT_MODE, key())
-            cipher.updateAAD(alias.toByteArray())
-            val ciphertext = cipher.doFinal(data)
-            val out = file.startWrite()
-            try {
-                out.write(cipher.iv) // Android GCM uses a fresh 12-byte IV.
-                out.write(ciphertext)
-                file.finishWrite(out)
-            } catch (e: Exception) { file.failWrite(out); throw e }
-        } finally { data.fill(0) }
+        try { writeRecord(data) } finally { data.fill(0) }
     }
-    fun load(): StoredProfile? {
+    fun writeRecord(data: ByteArray) {
+        require(data.size + 28 <= maxBytes)
+        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+        cipher.init(Cipher.ENCRYPT_MODE, key())
+        cipher.updateAAD(alias.toByteArray())
+        val ciphertext = cipher.doFinal(data)
+        val out = file.startWrite()
+        try {
+            out.write(cipher.iv)
+            out.write(ciphertext)
+            file.finishWrite(out)
+        } catch (e: Exception) { file.failWrite(out); throw e }
+    }
+    fun readRecord(): ByteArray? {
         if (!file.baseFile.exists()) return null
         val data = file.openRead().use { input ->
             val out = java.io.ByteArrayOutputStream()
@@ -56,16 +57,19 @@ class ProfileVault(context: Context) {
             while (true) {
                 val n = input.read(buffer)
                 if (n < 0) break
-                require(out.size() + n <= 131_072)
+                require(out.size() + n <= maxBytes)
                 out.write(buffer, 0, n)
             }
             out.toByteArray()
         }
-        require(data.size in 29..131_072)
+        require(data.size in 29..maxBytes)
         val cipher = Cipher.getInstance("AES/GCM/NoPadding")
         cipher.init(Cipher.DECRYPT_MODE, key(), GCMParameterSpec(128, data.copyOfRange(0, 12)))
         cipher.updateAAD(alias.toByteArray())
-        val plain = cipher.doFinal(data, 12, data.size - 12)
+        return cipher.doFinal(data, 12, data.size - 12)
+    }
+    fun load(): StoredProfile? {
+        val plain = readRecord() ?: return null
         try {
             val j = JSONObject(plain.toString(Charsets.UTF_8))
             val p = ConnectionProfile(j.getString("host"), j.getInt("port"), j.getString("user"), j.getString("fingerprint"))

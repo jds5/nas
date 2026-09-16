@@ -32,7 +32,11 @@ data class Pane(val id: String, val pid: Long, val serverPid: Long, val session:
     val canWrite: Boolean get() = command == "codex"
 }
 
-enum class RemoteKey(val tmuxName: String) { Enter("Enter"), Escape("Escape"), Up("Up"), Down("Down"), Tab("Tab"), Interrupt("C-c") }
+enum class RemoteKey(val tmuxName: String) {
+    Enter("Enter"), Escape("Escape"), Up("Up"), Down("Down"), Left("Left"), Right("Right"),
+    ShiftLeft("S-Left"), ShiftRight("S-Right"), Tab("Tab"), BackTab("BTab"),
+    AltDown("M-Down"), SkipQuestion("C-]"), Space("Space"), Backspace("BSpace"), ClearLine("C-u"), Interrupt("C-c")
+}
 
 object TerminalText {
     // Plain text only: no HTML, escape sequence interpretation or automatic URL handling.
