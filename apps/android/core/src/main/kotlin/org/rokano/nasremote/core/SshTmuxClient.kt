@@ -6,6 +6,9 @@ import com.jcraft.jsch.HostKeyRepository
 import com.jcraft.jsch.JSch
 import com.jcraft.jsch.Session
 import com.jcraft.jsch.UserInfo
+import com.jcraft.jsch.SocketFactory
+import java.net.Socket
+import java.net.InetSocketAddress
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.util.UUID
@@ -13,10 +16,12 @@ import java.util.UUID
 class PinnedHostKeys(private val expected: String) : HostKeyRepository {
     @Volatile var rejected = false
         private set
+    @Volatile var verified = false
+        private set
     init { Fingerprints.decode(expected) }
     override fun check(host: String?, key: ByteArray?): Int {
         val accepted = key != null && Fingerprints.matches(expected, key)
-        if (!accepted) rejected = true
+        if (!accepted) rejected = true else verified = true
         return if (accepted) HostKeyRepository.OK else HostKeyRepository.CHANGED
     }
     override fun add(hostkey: HostKey?, ui: UserInfo?) = Unit // No trust-on-first-use writes.
@@ -39,10 +44,24 @@ class SshTmuxClient : AutoCloseable {
         val jsch = JSch()
         identity = jsch
         jsch.setHostKeyRepository(pins)
+        var stage = ConnectionStage.KEY
         try {
             jsch.addIdentity("phone", key, null, passphrase.takeIf { it.isNotEmpty() })
             val s = jsch.getSession(profile.user, profile.host, profile.port)
             session = s
+            s.setSocketFactory(object : SocketFactory {
+                override fun createSocket(host: String, port: Int): Socket {
+                    stage = ConnectionStage.TCP
+                    val socket = Socket()
+                    try {
+                        socket.connect(InetSocketAddress(host, port), 15_000)
+                        stage = ConnectionStage.SSH
+                        return socket
+                    } catch (e: Exception) { socket.close(); throw e }
+                }
+                override fun getInputStream(socket: Socket) = socket.getInputStream()
+                override fun getOutputStream(socket: Socket) = socket.getOutputStream()
+            })
             s.setConfig("StrictHostKeyChecking", "yes")
             s.setConfig("PreferredAuthentications", "publickey")
             s.setConfig("ClearAllForwardings", "yes")
@@ -52,7 +71,7 @@ class SshTmuxClient : AutoCloseable {
             s.connect(15_000)
         } catch (e: Exception) {
             close()
-            throw IllegalStateException(if (pins.rejected) "主机指纹不匹配，已拒绝连接。请通过可信渠道核对。" else "SSH 连接失败，请检查网络、用户、私钥与口令。")
+            throw IllegalStateException(ConnectionFailure.describe(e, if (pins.verified) ConnectionStage.AUTH else stage, pins.rejected))
         }
     }
 

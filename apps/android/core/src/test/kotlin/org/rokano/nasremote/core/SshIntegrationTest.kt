@@ -86,7 +86,21 @@ class SshIntegrationTest {
                     assertTrue(failure.message!!.contains("指纹不匹配"))
                 }
                 SshTmuxClient().use { client ->
-                    assertThrows(IllegalStateException::class.java) { client.connect(profile, key, "wrong".toByteArray()) }
+                    val failure = assertThrows(IllegalStateException::class.java) { client.connect(profile, key, "wrong".toByteArray()) }
+                    assertTrue(failure.message, failure.message!!.contains("[E_PRIVATE_KEY]"))
+                }
+                // Revoke only this disposable test server's key to exercise server-side auth rejection.
+                Files.writeString(dir.resolve("authorized_keys"), "")
+                SshTmuxClient().use { client ->
+                    val failure = assertThrows(IllegalStateException::class.java) { client.connect(profile, key, password) }
+                    assertTrue(failure.message, failure.message!!.contains("[E_AUTH]"))
+                }
+                val closedPort = ServerSocket(0).use { it.localPort }
+                SshTmuxClient().use { client ->
+                    val failure = assertThrows(IllegalStateException::class.java) {
+                        client.connect(profile.copy(port = closedPort), key, password)
+                    }
+                    assertTrue(failure.message!!.contains("[E_TCP_REFUSED]"))
                 }
             } finally { key.fill(0); password.fill(0) }
         } finally {
