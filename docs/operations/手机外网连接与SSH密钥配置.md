@@ -136,6 +136,34 @@ sudo /usr/sbin/sshd -t && sudo systemctl reload ssh
 
 无法进行端口转发或不希望公开 SSH 时，使用已验证的 VPN 地址连接即可，不必改 App。没有来自真实外部网络的成功证据前，不将 NAS 自测或 NAT 回环测试称为外网验收。
 
+### UFW 只允许 LAN 导致公网 SSH 超时（2026-09-16）
+
+用户提供的生效规则显示 UFW 默认拒绝入站，`22/tcp` 仅允许 `192.168.0.0/16`；另有同网段的全端口允许。手机公网来源不在此网段。结合 NAS 抓到重复 SYN、没有 SYN-ACK，以及正确回程路由，已定位到公网 SSH 缺少 UFW 允许规则。路由器已把该次请求送到 `192.168.50.33:22`，此处不应放行 NAS 的 2257，也不应使用 `ufw route allow`。
+
+以下为**待用户执行**的最小范围修复，助手没有管理员权限，未实际修改防火墙。保留现有管理连接，先成功备份：
+
+```bash
+sudo cp -a /etc/ufw "/root/ufw-before-remote-ssh-$(date +%Y%m%d-%H%M%S)"
+```
+
+然后仅允许经本机 LAN 网卡进入、目的为本机 IPv4 的 SSH：
+
+```bash
+sudo ufw allow in on enp1s0 proto tcp from any to 192.168.50.33 port 22 comment 'NAS remote SSH IPv4'
+sudo ufw status verbose
+```
+
+此规则允许任意 IPv4 来源到指定接口/地址的 SSH，以适配动态移动出口；保持现有 key-only 和固定主机指纹，不开放其他端口或 IPv6 SSH，不关闭 UFW。活跃 UFW 的规则变更会直接应用，不需要重启 NAS/SSH。手机关闭 Wi-Fi，以 `jelly.rokano.org:2257`、`yao` 和原私钥/指纹重连，有私钥口令时重新填写；只有 4G 实测成功后才记录修复完成。
+
+仅撤销上述新增规则的回滚：
+
+```bash
+sudo ufw delete allow in on enp1s0 proto tcp from any to 192.168.50.33 port 22
+sudo ufw status verbose
+```
+
+命令语法及规则管理依据：[Debian UFW 手册](https://manpages.debian.org/trixie/ufw/ufw.8.en.html)。实际执行与用户验收结果统一记录在 [运维记录](运维记录.md)。
+
 ## 4. 下载与撤销
 
 同家庭局域网手机打开 [下载页](http://192.168.50.33:8765/)，获取当前签名测试安装包。不要把 8765 转发公网，也不要在页面上传私钥。下载服务管理见 [分发说明](../../apps/android/distribution/README.md)。
