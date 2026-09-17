@@ -21,7 +21,7 @@ import org.rokano.nasremote.security.*
 import java.security.MessageDigest
 
 data class PendingAttachment(val id: String, val name: String, val size: Long, val sha256: String,
-    val image: Boolean, val file: java.io.File, val binding: String) {
+    val image: Boolean, val file: java.io.File, val target: AttachmentTarget) {
     fun json() = JSONObject().put("id", id).put("name", name).put("size", size).put("sha256", sha256).put("image", image)
 }
 
@@ -102,6 +102,11 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
     private var poll: Job? = null
     @Volatile private var epoch = 0
     @Volatile private var foreground = true
+    private var pickerTarget: AttachmentTarget? = null
+    @Volatile private var attachmentGeneration = 0
+    private var cameraFile: java.io.File? = null
+    private var cameraUri: Uri? = null
+    private val cameraDir = java.io.File(application.cacheDir, "camera")
     private var pickerActive = false
     private var pickerPaused = false
     private var pickerTimeout: Job? = null
@@ -112,6 +117,8 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
         // Temporary copies never survive an application process restart.
         attachmentDir.listFiles()?.forEach { it.delete() }
         attachmentDir.mkdirs()
+        cameraDir.mkdirs()
+        cameraDir.listFiles()?.forEach { it.delete() }
         viewModelScope.launch {
             try {
                 val saved = withContext(Dispatchers.IO) { vault.load() }
@@ -128,24 +135,48 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
     }
     fun beginAttachmentPicker(): Boolean {
         val s = state.value
-        if (!s.connected || s.busy || s.reconnecting || s.preparingAttachment || s.binding == null || s.attachments.size >= 4) return false
+        if (!s.connected || s.busy || s.reconnecting || s.preparingAttachment || s.uncertain || s.binding == null || s.attachments.size >= 4) return false
+        pickerTarget = AttachmentTarget(profileId(), s.selected?.identity ?: return false, s.binding)
         pickerActive = true
         pickerTimeout?.cancel()
         pickerTimeout = viewModelScope.launch {
             delay(120_000)
-            if (pickerActive) { pickerActive = false; disconnect("文件选择已超时，请重新连接。") }
+            if (pickerActive) { pickerActive = false; disconnect("连接已暂停。可以继续选择，附件会保留；返回后接回原会话即可发送。") }
         }
         return true
     }
-    fun attachmentsSelected(uris: List<Uri>) {
+    fun prepareCamera(): Uri {
+        val file = java.io.File.createTempFile("photo-", ".jpg", cameraDir)
+        cameraFile = file
+        return androidx.core.content.FileProvider.getUriForFile(getApplication(),
+            getApplication<Application>().packageName + ".files", file).also { cameraUri = it }
+    }
+    fun cameraFinished(success: Boolean) {
+        val uri = cameraUri
+        val file = cameraFile
+        cameraUri = null; cameraFile = null
+        acceptAttachments(if (success && uri != null) listOf(uri) else emptyList(), file, uri)
+    }
+    fun pickerFailed() {
+        cameraFinished(false)
+        mutable.update { it.copy(message = "无法打开相册或相机，请使用文件入口或检查系统应用。") }
+    }
+    fun attachmentsSelected(uris: List<Uri>) = acceptAttachments(uris)
+    private fun acceptAttachments(uris: List<Uri>, ownedFile: java.io.File? = null, ownedUri: Uri? = null) {
         pickerActive = false
         pickerTimeout?.cancel()
-        val binding = state.value.binding ?: return
-        if (uris.isEmpty()) return
+        val target = pickerTarget
+        pickerTarget = null
+        fun cleanupCamera() {
+            ownedFile?.delete()
+            ownedUri?.let { getApplication<Application>().revokeUriPermission(it,
+                android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION or android.content.Intent.FLAG_GRANT_WRITE_URI_PERMISSION) }
+        }
+        if (target == null || uris.isEmpty()) { cleanupCamera(); return }
         val available = 4 - state.value.attachments.size
-        if (uris.size > available) { mutable.update { it.copy(message = "一条消息最多选择 4 个附件") }; return }
+        if (uris.size > available) { cleanupCamera(); mutable.update { it.copy(message = "一条消息最多选择 4 个附件") }; return }
         mutable.update { it.copy(preparingAttachment = true) }
-        val token = epoch
+        val token = attachmentGeneration
         viewModelScope.launch {
             val prepared = mutableListOf<PendingAttachment>()
             try {
@@ -169,7 +200,7 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
                                     if (count < 0) break
                                     size += count
                                     require(size + total <= 20L * 1024 * 1024) { "每条消息附件总量不能超过 20 MiB" }
-                                    check(token == epoch) { "连接已变化，请重新选择附件" }
+                                    check(token == attachmentGeneration) { "附件选择已取消" }
                                     digest.update(bytes, 0, count); output.write(bytes, 0, count)
                                 }
                             } }
@@ -179,18 +210,20 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
                             val image = (header[0] == 0x89.toByte() && header.sliceArray(1..3).toString(Charsets.US_ASCII) == "PNG") ||
                                 (header[0] == 0xff.toByte() && header[1] == 0xd8.toByte()) ||
                                 (header.sliceArray(0..3).toString(Charsets.US_ASCII) == "RIFF" && header.sliceArray(8..11).toString(Charsets.US_ASCII) == "WEBP")
-                            prepared += PendingAttachment(id, name, size, digest.digest().joinToString("") { "%02x".format(it) }, image, file, binding)
+                            prepared += PendingAttachment(id, name, size, digest.digest().joinToString("") { "%02x".format(it) }, image, file, target)
                             total += size
                         } catch (e: Exception) { file.delete(); throw e }
                     }
                 }
-                if (token == epoch && binding == state.value.binding) mutable.update { it.copy(attachments = it.attachments + prepared, message = null) }
+                if (token == attachmentGeneration && target.profile == profileId() && (state.value.selected == null || state.value.selected?.identity == target.pane)) mutable.update {
+                    it.copy(attachments = it.attachments + prepared, message = if (it.connected) null else "附件已保留，接回原会话后即可发送，无需重新选择。")
+                }
                 else prepared.forEach { it.file.delete() }
             } catch (e: Exception) {
                 prepared.forEach { it.file.delete() }
                 if (e is CancellationException) throw e
                 mutable.update { it.copy(message = if (e is IllegalArgumentException || e is IllegalStateException) e.message else "无法读取附件，请重新选择本地文件。") }
-            } finally { mutable.update { it.copy(preparingAttachment = false) } }
+            } finally { cleanupCamera(); mutable.update { it.copy(preparingAttachment = false) } }
         }
     }
     fun removeAttachment(id: String) {
@@ -199,6 +232,8 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
         mutable.update { it.copy(attachments = it.attachments.filterNot { a -> a.id == id }) }
     }
     private fun clearAttachments() {
+        attachmentGeneration++
+        pickerTarget = null
         state.value.attachments.forEach { it.file.delete() }
         mutable.update { it.copy(attachments = emptyList(), attachmentProgress = "") }
     }
@@ -226,7 +261,7 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
         if (!state.value.ready || state.value.busy || state.value.connected || !foreground) return
         try { profile.validate(); require(importedKey != null) { "请先导入手机专用私钥" } }
         catch (e: IllegalArgumentException) { mutable.update { it.copy(message = e.message) }; return }
-        if (profile != state.value.profile) drafts.clear()
+        if (profile != state.value.profile) { drafts.clear(); clearAttachments() }
         val token = ++epoch
         val remote = SshTmuxClient()
         client = remote
@@ -259,7 +294,7 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
     fun select(pane: Pane, terminal: Boolean = false, restored: SessionMemo? = null) {
         if (state.value.busy || state.value.preparingAttachment || state.value.reconnecting || !state.value.connected) return
         rememberSession()
-        clearAttachments()
+        if (state.value.attachments.any { !it.target.canRestore(profileId(), pane.identity) }) clearAttachments()
         selection++
         loadingMemo = restored
         val prior = restored ?: memos.values.lastOrNull { it.profile == profileId() && it.pane == pane.identity }
@@ -269,7 +304,6 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
     fun back() {
         if (state.value.busy || state.value.preparingAttachment || state.value.reconnecting) return
         rememberSession()
-        clearAttachments()
         selection++
         mutable.update { it.copy(selected = null, output = emptyList()) }
     }
@@ -409,7 +443,7 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
             val attachments = org.json.JSONArray()
             for ((index, attachment) in s.attachments.withIndex()) {
                 check(sendEpoch == epoch && foreground) { "连接已变化" }
-                if (attachment.binding != binding) throw InputRejected("附件属于其他会话，请移除后重新选择")
+                if (!attachment.target.canSend(profileId(), pane.identity, binding)) throw InputRejected("附件绑定的原会话已变化，请移除后重新选择")
                 val uploaded = JSONObject(remote.upload(request(pane, "upload", binding).put("attachment", attachment.json()).toString(), attachment.file) { bytes ->
                     mutable.update { it.copy(attachmentProgress = "上传 ${index + 1}/${s.attachments.size} · ${bytes * 100 / attachment.size}%") }
                 })
@@ -692,7 +726,13 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
             } catch (_: Exception) { mutable.update { it.copy(busy = false, message = "清除失败，可在系统设置中清除应用数据。") } }
         }
     }
-    override fun onCleared() { client?.close(); importedKey?.fill(0); attachmentDir.listFiles()?.forEach { it.delete() } }
+    override fun onCleared() {
+        client?.close(); importedKey?.fill(0)
+        cameraUri?.let { getApplication<Application>().revokeUriPermission(it,
+            android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION or android.content.Intent.FLAG_GRANT_WRITE_URI_PERMISSION) }
+        attachmentDir.listFiles()?.forEach { it.delete() }
+        cameraDir.listFiles()?.forEach { it.delete() }
+    }
 }
 
 private fun java.io.InputStream.readBytesLimited(max: Int): ByteArray {

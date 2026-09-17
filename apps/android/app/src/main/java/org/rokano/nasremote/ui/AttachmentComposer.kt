@@ -2,6 +2,7 @@ package org.rokano.nasremote.ui
 
 import android.graphics.BitmapFactory
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.horizontalScroll
@@ -20,15 +21,32 @@ import org.rokano.nasremote.PendingAttachment
 import org.rokano.nasremote.RemoteState
 import org.rokano.nasremote.RemoteViewModel
 
+data class AttachmentActions(val photos: () -> Unit, val camera: () -> Unit, val files: () -> Unit)
+
+/** Register at the application root: disconnecting must not unregister pending results. */
 @Composable
-fun AttachmentComposer(state: RemoteState, model: RemoteViewModel) {
-    val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments(), model::attachmentsSelected)
-    val enabled = state.connected && !state.busy && !state.reconnecting && !state.preparingAttachment && state.binding != null && state.attachments.size < 4
+fun rememberAttachmentActions(model: RemoteViewModel): AttachmentActions {
+    val files = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments(), model::attachmentsSelected)
+    val photos = rememberLauncherForActivityResult(ActivityResultContracts.PickMultipleVisualMedia(4), model::attachmentsSelected)
+    val camera = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture(), model::cameraFinished)
+    fun launch(action: () -> Unit) {
+        if (!model.beginAttachmentPicker()) return
+        try { action() } catch (_: Exception) { model.pickerFailed() }
+    }
+    return AttachmentActions(
+        photos = { launch { photos.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) } },
+        camera = { launch { camera.launch(model.prepareCamera()) } },
+        files = { launch { files.launch(arrayOf("*/*")) } })
+}
+
+@Composable
+fun AttachmentComposer(state: RemoteState, model: RemoteViewModel, actions: AttachmentActions) {
+    val enabled = state.connected && !state.busy && !state.reconnecting && !state.uncertain && !state.preparingAttachment && state.binding != null && state.attachments.size < 4
     Column {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            TextButton(onClick = { if (model.beginAttachmentPicker()) picker.launch(arrayOf("image/*")) }, enabled = enabled) { Text("＋ 图片") }
-            TextButton(onClick = { if (model.beginAttachmentPicker()) picker.launch(arrayOf("*/*")) }, enabled = enabled) { Text("＋ 文件") }
-            Text("最多 4 个 · 共 20 MiB", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), verticalAlignment = Alignment.CenterVertically) {
+            TextButton(onClick = actions.photos, enabled = enabled) { Text("截图 / 相册") }
+            TextButton(onClick = actions.camera, enabled = enabled) { Text("拍照") }
+            TextButton(onClick = actions.files, enabled = enabled) { Text("文件…") }
         }
         if (state.preparingAttachment) LinearProgressIndicator(Modifier.fillMaxWidth())
         if (state.attachments.isNotEmpty()) {
@@ -48,7 +66,7 @@ fun AttachmentComposer(state: RemoteState, model: RemoteViewModel) {
                     }
                 }
             }
-            Text("上传到 NAS 私有目录，交给当前 Codex 读取；图片由图片工具查看。", style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(top = 4.dp))
+            Text("最多 4 个 · 共 20 MiB · 发送前可以移除", style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(top = 4.dp))
         }
         if (state.attachmentProgress.isNotBlank()) Text(state.attachmentProgress, style = MaterialTheme.typography.labelMedium)
     }

@@ -42,6 +42,7 @@ import org.rokano.nasremote.core.*
 @Composable
 fun NasRemoteApp(model: RemoteViewModel) {
     val state by model.state.collectAsStateWithLifecycle()
+    val attachmentActions = rememberAttachmentActions(model)
     val screen = if (!state.connected) "connection" else if (state.selected == null) "panes" else if (state.terminal) "terminal" else "chat"
     BackHandler(state.selected != null && state.connected) { model.back() }
     NasTheme {
@@ -77,7 +78,7 @@ fun NasRemoteApp(model: RemoteViewModel) {
                     when (destination) {
                         "connection" -> ConnectionScreen(state, model)
                         "panes" -> PanesScreen(state, model)
-                        "chat" -> key(state.selected?.identity) { ChatScreen(state, model) }
+                        "chat" -> key(state.selected?.identity) { ChatScreen(state, model, attachmentActions) }
                         else -> TerminalScreen(state, model)
                     }
                 }
@@ -113,6 +114,7 @@ private fun ConnectionScreen(state: RemoteState, model: RemoteViewModel) {
                 Text("SSH 加密  ·  主机指纹校验", style = MaterialTheme.typography.labelLarge)
             }
         }
+        if (state.attachments.isNotEmpty()) Text("已保留 ${state.attachments.size} 个待发送附件，接回原会话后继续发送。", color = MaterialTheme.colorScheme.primary)
         Text("连接到主机", style = MaterialTheme.typography.titleLarge)
         OutlinedTextField(host, { host = it.trim() }, label = { Text("公网主机 / DDNS 地址") }, placeholder = { Text("ssh.example.com") }, supportingText = { Text("填写 SSH 主机名或 IP，不含 https://；内网测试也可填写局域网 IP。") }, singleLine = true, enabled = !state.busy && state.ready, modifier = Modifier.fillMaxWidth())
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {

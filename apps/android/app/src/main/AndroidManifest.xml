@@ -10,6 +10,10 @@
         android:icon="@drawable/ic_launcher"
         android:theme="@style/Theme.NasRemote"
         android:supportsRtl="true">
+        <provider android:name=".CameraFileProvider"
+            android:authorities="${applicationId}.files" android:exported="false" android:grantUriPermissions="true">
+            <meta-data android:name="android.support.FILE_PROVIDER_PATHS" android:resource="@xml/camera_paths" />
+        </provider>
         <activity android:name=".MainActivity" android:exported="true" android:windowSoftInputMode="adjustResize">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />

@@ -28,9 +28,11 @@ fun Message(message: ChatItem, modifier: Modifier = Modifier) {
     var expanded by remember(message.id) { mutableStateOf(false) }
     val attachmentBody = remember(message.id, message.text) { if (user) attachmentPresentation(message.text) else null }
     val body = attachmentBody?.first ?: message.text
-    val long = body.length > 1600 || body.count { it == '\n' } > 32
+    val parsed = remember(body) { messageBlocks(body) }
+    // Never cut a table mid-row through the generic long-message preview.
+    val long = parsed.none { it is MessageBlock.Table } && (body.length > 1600 || body.count { it == '\n' } > 32)
     val visible = if (long && !expanded) body.take(1200).lines().take(24).joinToString("\n") else body
-    val blocks = remember(visible, expanded) { messageBlocks(visible) }
+    val blocks = remember(visible, expanded) { if (long && !expanded) messageBlocks(visible) else parsed }
     val clipboard = LocalClipboardManager.current
     Column(modifier.fillMaxWidth(), horizontalAlignment = if (user) Alignment.End else Alignment.Start) {
         Row(verticalAlignment = Alignment.CenterVertically) {

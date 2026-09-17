@@ -36,7 +36,7 @@ private val commands = listOf(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ChatScreen(state: RemoteState, model: RemoteViewModel) {
+fun ChatScreen(state: RemoteState, model: RemoteViewModel, attachmentActions: AttachmentActions) {
     val pane = state.selected ?: return
     val list = rememberLazyListState()
     val scope = rememberCoroutineScope()
@@ -137,7 +137,7 @@ fun ChatScreen(state: RemoteState, model: RemoteViewModel) {
         if (state.uncertain) FilledTonalButton(onClick = { model.panel(true) }, modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp)) { Text("核对上次发送结果") }
         Surface(tonalElevation = 2.dp, shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp)) {
             Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                AttachmentComposer(state, model)
+                AttachmentComposer(state, model, attachmentActions)
                 if (state.answered.isNotBlank()) Text(state.answered, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
                 if (state.delivery.isNotBlank()) Text(when (state.delivery) {
                     "sending" -> "正在发送…"
