@@ -15,6 +15,12 @@ from pathlib import Path
 
 MAX_READ = 1024 * 1024
 MAX_TEXT = 24000
+QUESTION_OPEN = re.compile(r'shift\s*\+\s*← to answer')
+QUESTION_SKIP = re.compile(r'ctrl\s*\+\s*\] skip')
+QUESTION_FOOTER = re.compile(
+    r'  enter submit   ctrl\s*\+\s*\] skip   alt\s*\+\s*↓ '
+    r'(?:main prompt|prev question)(?:   shift\s*\+\s*← next question)?'
+)
 
 
 class Refused(Exception):
@@ -350,7 +356,7 @@ def native_question(screen, answer=None):
         lines.pop(0)
     while lines and not lines[-1].strip():
         lines.pop()
-    if not lines or not re.fullmatch(r'  enter submit   ctrl \+ \] skip   alt \+ ↓ (?:main prompt|prev question)(?:   shift \+ ← next question)?', lines[-1]):
+    if not lines or not QUESTION_FOOTER.fullmatch(lines[-1]):
         return None
     footer = lines.pop()
     index, count = 1, 1
@@ -436,7 +442,7 @@ def leave_question(request, pane, binding):
             if index > 1:
                 if not previous or previous['index'] != index - 1 or previous['count'] != question['count']:
                     raise Refused('无法核对问题切换')
-            elif previous or 'shift + ← to answer' not in '\n'.join(screen.rstrip().splitlines()[-12:]):
+            elif previous or not QUESTION_OPEN.search('\n'.join(screen.rstrip().splitlines()[-12:])):
                 raise Refused('无法核对返回结果')
         return {'ok': True}
     except Exception:
@@ -651,8 +657,8 @@ def handle(request, source=None):
                 reply['screenToken'] = screen_token(screen)
                 reply['question'] = native_question(screen)
                 footer = '\n'.join(screen.rstrip().splitlines()[-12:])
-                reply['questionClosed'] = 'shift + ← to answer' in footer
-                reply['questionHint'] = reply['questionClosed'] or ('enter submit' in footer and 'ctrl + ] skip' in footer)
+                reply['questionClosed'] = bool(QUESTION_OPEN.search(footer))
+                reply['questionHint'] = reply['questionClosed'] or ('enter submit' in footer and bool(QUESTION_SKIP.search(footer)))
             if request.get('includeSkills'):
                 reply['skills'] = skills(meta.get('cwd', str(Path.home())))
             while reply.get('skills') and len(json.dumps(reply, ensure_ascii=False).encode()) > 250000:

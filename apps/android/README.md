@@ -1,6 +1,6 @@
 # 接续 · NAS Remote
 
-独立 Android 子项目：通过 SSH 接续 NAS 上正在运行的 Codex。当前为 0.4.1，默认展示聊天消息，普通输入框一次发送；原终端模式保留为可选入口。无需新端口或 NAS 常驻服务，不新建、恢复或分叉正在控制的 Codex。
+独立 Android 子项目：通过 SSH 接续 NAS 上正在运行的 Codex。当前为 0.4.2，默认展示聊天消息，普通输入框一次发送；原终端模式保留为可选入口。无需新端口或 NAS 常驻服务，不新建、恢复或分叉正在控制的 Codex。
 
 ## 结构
 
@@ -77,6 +77,14 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 - 单条超过显示上限、超过 300 条历史、超过 1 MiB 的单条 JSON 记录或无法识别的界面需要终端核对。退出 App 后聊天内容不保存在手机；NAS 自身的 Codex 日志保留策略不受 App 控制。
 
 界面沿用稳定版 Material 3、动态配色和系统动画设置；聊天使用稳定消息 ID、惰性列表、轻量原生 Markdown 显示和列表过渡，网络与文件操作在 IO 线程。未连接 Android 真机/模拟器，不能宣称达到 60/90/120 Hz；本版仍需实机验证输入法、旋转、字体缩放、锁屏换网以及发送期间断网。
+
+## 0.4.2：Codex 提问界面兼容（2026-09-25）
+
+Codex CLI 0.156.1 的提问界面把快捷键显示从 `shift + ←`、`ctrl + ]`、`alt + ↓` 改为 `shift+←`、`ctrl+]`、`alt+↓`。旧桥接器精确匹配前一写法，导致待答提示和问题卡片不出现。此版同时识别两种写法，保留题目 ID、画面令牌、提交前复核和异常时不自动重试的约束；普通聊天发送流程未改。
+
+在独立临时 tmux/Codex 0.156.1 会话中实际触发一道问题，修正后的桥接器识别问题并提交选项；之后发送普通消息并读取预期回复。测试没有向既有工作会话发送输入。45 项 Python（含隔离 tmux）、22 项 JVM（含隔离 SSH）、3 项下载服务测试通过；Debug/Release 构建和 Lint 通过。0.4.2（versionCode 9）签名与 0.4.1 相同，已更新 [LAN 下载页](http://192.168.50.33:8765/)；经 HTTP 下载的 3,330,056 字节 APK 与签名包、页面校验值一致。SHA-256：`7b54947d4192e46923ca57ad81b7fde9b31b5c68cf0156d7b7315bbf06bd1ba9`。
+
+手机真机的提问弹层、输入法和换网仍需安装后验收。官方 Codex CLI 说明见 [OpenAI Docs](https://learn.chatgpt.com/docs/codex/cli)；此处快捷键变化依据本机 0.156.1 的实际终端画面，不将该画面格式视为稳定协议。旧包保留，下载服务的旧 unit 备份为 `~/.config/systemd/user/nas-app-download.service.before-0.4.2`；恢复旧版下载页只需将该 unit 复制回原路径，执行 `systemctl --user daemon-reload` 和 `systemctl --user restart nas-app-download.service`，这不会自动降级已安装的手机 App。
 
 ## 0.4.1：一天实用反馈修正（2026-09-17）
 

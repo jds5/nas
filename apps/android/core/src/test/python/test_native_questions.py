@@ -15,6 +15,10 @@ def screen(selected=0, title='请选择配色：', answer='Other', page='1 of 2'
     return '\n'.join(rows+['',footer,'',''])
 
 
+def compact_shortcuts(value):
+    return value.replace('ctrl + ]', 'ctrl+]').replace('alt + ↓', 'alt+↓').replace('shift + ←', 'shift+←')
+
+
 class NativeQuestionTests(unittest.TestCase):
     def test_form_contains_exact_question_and_choices(self):
         q=b.native_question(screen())
@@ -36,6 +40,20 @@ class NativeQuestionTests(unittest.TestCase):
         self.assertEqual(b.screen_token(first),b.screen_token(first.replace('13s','14s')))
         self.assertNotEqual(b.screen_token(first),b.screen_token(first.replace('2 questions','3 questions')))
         self.assertIsNone(b.native_question(screen(title='中'*3000)))
+
+    def test_current_cli_compact_shortcuts_keep_question_identity_and_hint(self):
+        old = screen()
+        new = compact_shortcuts(old)
+        self.assertEqual(b.native_question(new), b.native_question(old))
+        closed = compact_shortcuts('• Queued follow-up inputs\n  ? 1 question · 20s\n    shift + ← to answer\n› Ask Codex to do anything'+'\n'*20)
+        with patch.object(b,'target',return_value={'id':'%1'}),patch.object(b,'locate',return_value=('binding',io.BytesIO(),{'id':'test'})),patch.object(b,'public_messages',return_value={}),patch.object(b,'run',return_value=closed):
+            result=b.handle({'action':'snapshot','screen':True})
+        self.assertTrue(result['questionHint'])
+        self.assertTrue(result['questionClosed'])
+        self.assertIsNone(result['question'])
+        open_view=compact_shortcuts(screen(page='2 of 2'))
+        self.assertTrue(b.native_question(open_view)['previous'])
+        self.assertFalse(b.native_question(open_view)['next'])
 
     def test_free_text_question_and_existing_draft(self):
         blank='• Queued follow-up inputs\n\n  叫什么名字？\n\n  Type your answer\n\n  enter submit   ctrl + ] skip   alt + ↓ main prompt'+'\n'*20
@@ -132,6 +150,19 @@ class NativeQuestionTests(unittest.TestCase):
             result=b.leave_question({'screenToken':b.screen_token(screen(page='2 of 2'))},{'id':'%1'},'binding')
         self.assertTrue(result['ok'])
         self.assertEqual(calls,['M-Down','M-Down'])
+
+    def test_defer_accepts_current_cli_compact_closed_view(self):
+        closed=compact_shortcuts('• Queued follow-up inputs\n  ? 1 question\n    shift + ← to answer\n› Ask Codex to do anything'+'\n'*20)
+        calls=[]
+        def run(*args,**kwargs):
+            if args[1]=='capture-pane': return compact_shortcuts(screen(page='1 of 1')) if not calls else closed
+            if args[1]=='send-keys': calls.append(args[-1])
+            return ''
+        initial=compact_shortcuts(screen(page='1 of 1'))
+        with patch.object(b,'target'),patch.object(b,'locate',side_effect=lambda _:('binding',io.BytesIO(),{})),patch.object(b,'run',side_effect=run),patch.object(b.time,'sleep'):
+            result=b.leave_question({'screenToken':b.screen_token(initial)},{'id':'%1'},'binding')
+        self.assertTrue(result['ok'])
+        self.assertEqual(calls,['M-Down'])
 
     def test_transport_loss_never_retries(self):
         result,calls=self.submit(1,fail='send-keys')
