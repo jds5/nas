@@ -43,8 +43,9 @@ import org.rokano.nasremote.core.*
 fun NasRemoteApp(model: RemoteViewModel) {
     val state by model.state.collectAsStateWithLifecycle()
     val attachmentActions = rememberAttachmentActions(model)
-    val screen = if (!state.connected) "connection" else if (state.selected == null) "panes" else if (state.terminal) "terminal" else "chat"
-    BackHandler(state.selected != null && state.connected) { model.back() }
+    val screen = if (!state.connected) "connection" else if (state.lifecycleOpen) "lifecycle" else if (state.selected == null) "panes" else if (state.terminal) "terminal" else "chat"
+    BackHandler(state.lifecycleOpen && (!state.lifecycleBusy || state.lifecycleMachineStatus in listOf("cloning", "pulling"))) { model.closeLifecycle() }
+    BackHandler(state.selected != null && state.connected && !state.lifecycleOpen) { model.back() }
     NasTheme {
         Scaffold(
             topBar = {
@@ -54,7 +55,8 @@ fun NasRemoteApp(model: RemoteViewModel) {
                         Text("NAS REMOTE", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }, navigationIcon = {
-                    if (state.selected != null && state.connected) TextButton(onClick = model::back, enabled = !state.busy) { Text("返回") }
+                    if (state.lifecycleOpen) TextButton(onClick = model::closeLifecycle, enabled = !state.lifecycleBusy || state.lifecycleMachineStatus in listOf("cloning", "pulling")) { Text("返回") }
+                    else if (state.selected != null && state.connected) TextButton(onClick = model::back, enabled = !state.busy) { Text("返回") }
                 }, actions = {
                     if (state.selected?.canWrite == true && state.connected) TextButton(onClick = { model.terminal(!state.terminal) }, enabled = !state.busy) { Text(if (state.terminal) "聊天" else "终端") }
                     if (state.connected) TextButton(onClick = { model.disconnect() }) { Text("断开") }
@@ -78,6 +80,7 @@ fun NasRemoteApp(model: RemoteViewModel) {
                     when (destination) {
                         "connection" -> ConnectionScreen(state, model)
                         "panes" -> PanesScreen(state, model)
+                        "lifecycle" -> LifecycleScreen(state, model)
                         "chat" -> key(state.selected?.identity) { ChatScreen(state, model, attachmentActions) }
                         else -> TerminalScreen(state, model)
                     }
@@ -161,12 +164,17 @@ private fun PanesScreen(state: RemoteState, model: RemoteViewModel) {
         item {
             Text("正在进行", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.SemiBold)
             Text("${state.profile.user}@${state.profile.host}", Modifier.padding(top = 8.dp, bottom = 12.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FilledTonalButton(onClick = { model.openLifecycle("restore_new") }) { Text("恢复历史") }
+                Button(onClick = { model.openLifecycle("existing") }) { Text("新建项目会话") }
+            }
+            if (state.lifecycleOperation != null) TextButton(onClick = model::inspectLifecycle) { Text("核对上次创建操作") }
         }
         if (state.panes.isEmpty()) item {
             Card(Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(24.dp)) {
                     Text("没有可连接的窗格", style = MaterialTheme.typography.titleMedium)
-                    Text("请先在 NAS 上启动 tmux；这里不会替你创建或重启任务。", Modifier.padding(top = 8.dp))
+                    Text("可从上方恢复历史对话，或为项目创建 tmux/Codex 会话。", Modifier.padding(top = 8.dp))
                 }
             }
         }
@@ -181,11 +189,71 @@ private fun PanesScreen(state: RemoteState, model: RemoteViewModel) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text("${pane.id}  ·  ${pane.command}", Modifier.weight(1f), style = MaterialTheme.typography.labelMedium)
                         if (pane.canWrite) TextButton(onClick = { model.select(pane, terminal = true) }) { Text("终端模式") }
+                        else if (pane.command == "bash") TextButton(onClick = { model.openLifecycle("restore_pane", pane) }) { Text("恢复 Codex") }
                     }
                 }
             }
         }
         item { Text("共享原会话，请避免与电脑同时输入。", Modifier.padding(top = 8.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+    }
+}
+
+@Composable
+private fun LifecycleScreen(state: RemoteState, model: RemoteViewModel) {
+    val mode = state.lifecycleMode
+    var session by remember(mode) { mutableStateOf(if (mode == "restore_pane") state.lifecyclePane?.session.orEmpty() else "") }
+    var path by remember(mode) { mutableStateOf("") }
+    var thread by remember(mode) { mutableStateOf("") }
+    var url by remember(mode) { mutableStateOf("") }
+    var branch by remember(mode) { mutableStateOf("") }
+    var pull by remember(mode) { mutableStateOf(false) }
+    val restoring = mode.startsWith("restore")
+    val choices = if (mode == "restore_pane") state.lifecycleThreads.filter { it.path == state.lifecyclePane?.path } else state.lifecycleThreads
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Text("恢复或启动 Codex", style = MaterialTheme.typography.headlineMedium)
+        Text("所有操作都在已连接的 NAS 上执行；请核对项目和 tmux 名称。", style = MaterialTheme.typography.bodyMedium)
+        if (mode != "inspect") Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+            FilterChip(selected = mode == "existing", onClick = { model.openLifecycle("existing") }, label = { Text("已有目录") })
+            FilterChip(selected = mode == "empty", onClick = { model.openLifecycle("empty") }, label = { Text("空目录") })
+            FilterChip(selected = mode == "clone", onClick = { model.openLifecycle("clone") }, label = { Text("Git 克隆") })
+        }
+        if (restoring) {
+            Text(if (mode == "restore_pane") "在 ${state.lifecyclePane?.session} 中恢复" else "恢复历史对话", style = MaterialTheme.typography.titleLarge)
+            if (choices.isEmpty()) Text("没有可用的历史会话记录。", style = MaterialTheme.typography.bodyMedium)
+            choices.take(30).forEach { item ->
+                FilterChip(selected = thread == item.id, onClick = { thread = item.id },
+                    label = { Text("${item.path.substringAfterLast('/')} · ${item.id.takeLast(8)} · ${item.created}", maxLines = 1) })
+            }
+            OutlinedTextField(thread, { thread = it.trim().take(36) }, label = { Text("精确会话 UUID（也可手动填写）") },
+                singleLine = true, enabled = !state.lifecycleBusy && state.lifecyclePreview == null, modifier = Modifier.fillMaxWidth())
+        }
+        if (mode != "restore_pane" && mode != "inspect") OutlinedTextField(session, { session = it.take(40) }, label = { Text("tmux 会话名称") },
+            singleLine = true, enabled = !state.lifecycleBusy && state.lifecyclePreview == null, modifier = Modifier.fillMaxWidth())
+        if (mode == "existing" || mode == "empty" || mode == "clone") OutlinedTextField(path, { path = it.take(500) },
+            label = { Text(if (mode == "existing") "NAS 项目绝对路径" else "新目录绝对路径（~/code 下一级）") },
+            placeholder = { Text("/home/${state.profile.user}/code/项目名") },
+            singleLine = true, enabled = !state.lifecycleBusy && state.lifecyclePreview == null, modifier = Modifier.fillMaxWidth())
+        if (mode == "clone") OutlinedTextField(url, { url = it.take(500) }, label = { Text("Git HTTPS / SSH 仓库地址") },
+            singleLine = true, enabled = !state.lifecycleBusy && state.lifecyclePreview == null, modifier = Modifier.fillMaxWidth())
+        if (mode == "clone") OutlinedTextField(branch, { branch = it.take(128) }, label = { Text("分支（留空使用远端默认分支）") },
+            singleLine = true, enabled = !state.lifecycleBusy && state.lifecyclePreview == null, modifier = Modifier.fillMaxWidth())
+        if (mode == "existing" && state.lifecyclePreview == null) Row(verticalAlignment = Alignment.CenterVertically) {
+            Checkbox(checked = pull, onCheckedChange = { pull = it }, enabled = !state.lifecycleBusy)
+            Text("先拉取已有 Git 仓库（仅快速前进）")
+        }
+        if (mode != "inspect" && state.lifecyclePreview == null) Button(onClick = { model.prepareLifecycle(session, path, thread, url, branch, pull) },
+            enabled = !state.lifecycleBusy && (!restoring || thread.isNotEmpty()), modifier = Modifier.fillMaxWidth()) { Text("检查并预览") }
+        state.lifecyclePreview?.let { preview ->
+            Card(Modifier.fillMaxWidth()) { Text(preview, Modifier.padding(18.dp)) }
+            Button(onClick = model::startLifecycle, enabled = !state.lifecycleBusy, modifier = Modifier.fillMaxWidth()) { Text("确认并启动") }
+            TextButton(onClick = { model.openLifecycle(mode, state.lifecyclePane) }, enabled = !state.lifecycleBusy) { Text("修改选择") }
+        }
+        if (state.lifecycleStatus.isNotBlank()) Text(state.lifecycleStatus, style = MaterialTheme.typography.bodyMedium)
+        if (mode == "inspect" && !state.lifecycleBusy && state.lifecycleOperation != null &&
+            state.lifecycleMachineStatus !in listOf("cloning", "pulling", "starting", "cloned", "pulled"))
+            TextButton(onClick = model::dismissLifecycleOperation) { Text("已核对，关闭此记录") }
+        if (state.lifecycleBusy) LinearProgressIndicator(Modifier.fillMaxWidth())
+        Text("结果不明确时请先检查目标窗格；本功能不会自动重试启动。", style = MaterialTheme.typography.bodySmall)
     }
 }
 

@@ -11,7 +11,8 @@ data class SessionMemo(
     val anchorByte: Long = 0, val seen: String = "", val uncertain: Boolean = false,
     val delivery: String = "", val answerDraft: String = "", val answerQuestion: String = "",
 )
-data class SavedSessions(val saveDrafts: Boolean = false, val entries: List<SessionMemo> = emptyList())
+data class SavedSessions(val saveDrafts: Boolean = false, val entries: List<SessionMemo> = emptyList(),
+    val pendingOperation: String = "", val pendingProfile: String = "")
 
 class SessionVault(context: Context) {
     private val record = ProfileVault(context, "sessions.v1", "nas-remote-sessions-v1", 2_097_152)
@@ -28,7 +29,7 @@ class SessionVault(context: Context) {
                     j.optString("seen").take(128), j.optBoolean("uncertain"), j.optString("delivery").take(64),
                     if (enabled) j.optString("answerDraft").take(16384) else "", j.optString("answerQuestion").take(128))
             } }
-            return SavedSessions(enabled, entries)
+            return SavedSessions(enabled, entries, root.optString("pendingOperation").take(80), root.optString("pendingProfile").take(80))
         } finally { bytes.fill(0) }
     }
     fun save(state: SavedSessions) {
@@ -39,7 +40,8 @@ class SessionVault(context: Context) {
                 .put("anchorByte", m.anchorByte).put("seen", m.seen).put("uncertain", m.uncertain).put("delivery", m.delivery)
                 .put("answerDraft", if (state.saveDrafts) m.answerDraft else "").put("answerQuestion", m.answerQuestion))
         }
-        val bytes = JSONObject().put("saveDrafts", state.saveDrafts).put("entries", entries).toString().toByteArray()
+        val bytes = JSONObject().put("saveDrafts", state.saveDrafts).put("entries", entries)
+            .put("pendingOperation", state.pendingOperation).put("pendingProfile", state.pendingProfile).toString().toByteArray()
         try { record.writeRecord(bytes) } finally { bytes.fill(0) }
     }
     fun delete() = record.delete()

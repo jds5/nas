@@ -90,6 +90,7 @@ class SshTmuxClient : AutoCloseable {
 
     /** Fixed bundled program; request data is carried only on stdin. No NAS installation. */
     fun bridge(request: String): String = exec(bridgeCommand, (request + "\n").toByteArray(Charsets.UTF_8))
+    fun lifecycle(request: String): String = exec(lifecycleCommand, (request + "\n").toByteArray(Charsets.UTF_8))
 
     fun upload(request: String, file: java.io.File, progress: (Long) -> Unit): String {
         require(file.length() in 1..20L * 1024 * 1024)
@@ -113,7 +114,16 @@ class SshTmuxClient : AutoCloseable {
         "python3 -c '" + script.replace("'", "'\"'\"'") + "'"
     }
 
-    fun panes(): List<Pane> = TmuxProtocol.parsePanes(exec(TmuxProtocol.LIST))
+    private val lifecycleCommand: String by lazy {
+        val script = requireNotNull(javaClass.getResourceAsStream("/nas_remote_lifecycle.py")).bufferedReader().use { it.readText() }
+        "python3 -c '" + script.replace("'", "'\"'\"'") + "'"
+    }
+
+    fun panes(): List<Pane> {
+        val output = exec("${TmuxProtocol.LIST} 2>&1 || true")
+        if (output.contains("no server running") || output.contains("error connecting to")) return emptyList()
+        return TmuxProtocol.parsePanes(output)
+    }
     fun capture(pane: Pane): String = TerminalText.clean(exec(TmuxProtocol.capture(pane)))
     fun paste(pane: Pane, text: String) {
         val bytes = TmuxProtocol.validatePaste(text)

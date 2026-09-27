@@ -1,8 +1,8 @@
 # 接续 · NAS Remote
 
-独立 Android 子项目：通过 SSH 接续 NAS 上正在运行的 Codex。当前为 0.4.2，默认展示聊天消息，普通输入框一次发送；原终端模式保留为可选入口。无需新端口或 NAS 常驻服务，不新建、恢复或分叉正在控制的 Codex。
+独立 Android 子项目：通过 SSH 接续 NAS 上正在运行的 Codex。当前为 0.5.0，默认展示聊天消息，普通输入框一次发送；原终端模式保留为可选入口。无需新端口或 NAS 常驻服务。
 
-用户提出的“Codex 退出后从手机恢复”和“为新项目创建 tmux/Codex”尚未在 0.4.2 实现；新项目支持已有目录、创建空目录及克隆 Git 仓库，已有仓库的快速前进拉取须单独选择。交互、协议和验收方案见[会话恢复与新建设计](../../docs/operations/手机接入现有tmux规划.md)。
+0.5.0 增加从手机恢复精确的历史 Codex UUID、在已有目录或新目录启动 tmux/Codex，以及克隆 Git 仓库；已有仓库的快速前进拉取须单独选择。交互和验收边界见[会话恢复与新建设计](../../docs/operations/手机接入现有tmux规划.md)。
 
 ## 结构
 
@@ -11,6 +11,7 @@ apps/android/
   app/                 # Compose 界面、连接生命周期、Keystore 凭据存储
   core/                # JVM SSH/tmux 传输、安全测试
     src/main/resources/nas_remote_bridge.py  # 随包分发、通过 SSH 执行的无状态适配器
+    src/main/resources/nas_remote_lifecycle.py  # 项目、tmux 与 Codex 生命周期操作
     src/test/python/   # 消息过滤、输入保护、真实 tmux / proc 测试
   distribution/        # 仅 LAN 的 APK 下载页面
   gradle/wrapper/       # 固定 Gradle 版本与发行包校验
@@ -52,7 +53,7 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 5. 点击 Codex 会话默认进入聊天页，编辑后点“发送”。输入 `/` 选择命令，`/skills` 打开技能列表，选择技能插入 `$技能名`；`!命令` 在 NAS 的 Codex 中执行。Codex 提问时点击问题卡片，选择选项或填写自定义回答，再点“提交回答”；菜单、审批或核对已有草稿可打开“控制面板”。列表及顶部的“终端”保留原先的粘贴、回车操作；其他程序仍只读。
 6. 前台短暂断网会尝试接回原执行器（最多 3 次），保留当前阅读与输入且不重放任何发送。离开 App 或锁屏会关闭 SSH；远端任务继续。返回后可点“接回上次会话”，有私钥口令时仍需输入；原执行器变化则停止。电脑和手机共享输入，请避免同时操作。
 
-使用默认 tmux socket，远端需要 POSIX shell、PATH 中的 tmux（已在 3.5a 验证）。聊天模式另外需要 Linux `/proc`、Python 3.9+ 以及同一 Unix 用户可读取的运行中 Codex rollout 文件（本次验证 CLI 0.154.0）。不支持跳板、密码登录、SSH 配置文件和自定义 socket。连接需有正在运行的 tmux server。填写的指纹必须与 SSH 实际协商的主机密钥匹配；指纹变更时拒绝连接，需通过可信渠道重新核对。
+使用默认 tmux socket，远端需要 POSIX shell、PATH 中的 tmux（已在 3.5a 验证）。聊天模式另外需要 Linux `/proc`、Python 3.9+ 以及同一 Unix 用户可读取的运行中 Codex rollout 文件。生命周期操作还需 `codex`、`~/code` 项目根目录；Git 操作需 `git`。不支持跳板、密码登录、SSH 配置文件和自定义 socket。没有 tmux server 时可以建立 SSH 连接并新建会话。填写的指纹必须与 SSH 实际协商的主机密钥匹配；指纹变更时拒绝连接，需通过可信渠道重新核对。
 
 ## 安全边界
 
@@ -79,6 +80,16 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 - 单条超过显示上限、超过 300 条历史、超过 1 MiB 的单条 JSON 记录或无法识别的界面需要终端核对。退出 App 后聊天内容不保存在手机；NAS 自身的 Codex 日志保留策略不受 App 控制。
 
 界面沿用稳定版 Material 3、动态配色和系统动画设置；聊天使用稳定消息 ID、惰性列表、轻量原生 Markdown 显示和列表过渡，网络与文件操作在 IO 线程。未连接 Android 真机/模拟器，不能宣称达到 60/90/120 Hz；本版仍需实机验证输入法、旋转、字体缩放、锁屏换网以及发送期间断网。
+
+## 0.5.0：恢复历史对话与新建项目会话（2026-09-28）
+
+在窗格列表点“恢复历史”，选择精确 UUID 并填写新的 tmux 名称；空闲 bash 窗格可点“恢复 Codex”，只会在原目录、原窗格身份及空输入行都通过复核时启动。点“新建项目会话”可在 `~/code` 的已有目录启动全新 Codex、创建一级空目录，或从 HTTPS/SSH 仓库克隆到新目录。已有仓库的“先拉取”默认关闭，只支持干净工作树、同名 origin 上游和快速前进。Git SSH 认证使用 NAS 已配置的密钥及主机校验，不会使用手机登录 NAS 的私钥。克隆不自动拉取子模块或 LFS 内容。
+
+所有启动先预检、显示项目路径及动作，再由用户确认。Git 操作断线后可在列表点“核对上次创建操作”；创建状态保存在 NAS 当前用户的 `~/.cache/nas-remote-lifecycle`，手机只加密保存操作 ID。创建或恢复完成后先打开终端，必要时由用户处理 Codex 登录、权限菜单或首条输入；产生 rollout 后返回列表打开聊天。无法确认发送结果时停止自动重试；克隆失败时临时目录留在 `~/code` 供人工核对。此版不会自动执行 `git init`、stash、rebase、reset 或强制覆盖。
+
+本轮 48 项 Python、22 项 JVM、3 项下载服务测试通过；Debug/Release 构建与 Lint 通过。签名测试包 0.5.0（versionCode 10）已放在 [LAN 下载页](http://192.168.50.33:8765/)，3,366,989 字节，SHA-256：`659c299b36d5ef773c4e3c4ce85afb5312a4449b6e96a3b4abf69061b18cdfb6`。签名与 0.4.2 相同，HTTP 下载字节与本地包一致；旧包仍保留。下载服务旧 unit 备份于 `~/.config/systemd/user/nas-app-download.service.before-0.5.0`，回滚下载页可复制回原 unit，执行 `systemctl --user daemon-reload` 和 `systemctl --user restart nas-app-download.service`。这不会自动降级手机已安装 App。
+
+后端测试使用独立 tmux socket 和临时 Git 仓库。手机真机及外网链路仍需在安装后验收，尤其是首次消息、断线重进和已有 bash 提示符识别。生产 tmux 会话未用于测试。
 
 ## 0.4.2：Codex 提问界面兼容（2026-09-25）
 

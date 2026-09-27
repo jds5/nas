@@ -27,6 +27,7 @@ data class PendingAttachment(val id: String, val name: String, val size: Long, v
 
 data class ChatItem(val id: String, val role: String, val text: String, val phase: String = "", val offset: Long = 0)
 data class SkillOption(val name: String, val description: String)
+data class SavedThread(val id: String, val path: String, val created: String)
 data class Question(val id: String, val title: String, val index: Int, val count: Int,
     val options: List<String>, val previous: Boolean, val next: Boolean, val freeText: Boolean)
 private class InputRejected(message: String) : Exception(message)
@@ -72,6 +73,15 @@ data class RemoteState(
     val attachmentProgress: String = "",
     val preparingAttachment: Boolean = false,
     val answered: String = "",
+    val lifecycleOpen: Boolean = false,
+    val lifecycleMode: String = "",
+    val lifecyclePane: Pane? = null,
+    val lifecycleThreads: List<SavedThread> = emptyList(),
+    val lifecyclePreview: String? = null,
+    val lifecycleStatus: String = "",
+    val lifecycleOperation: String? = null,
+    val lifecycleBusy: Boolean = false,
+    val lifecycleMachineStatus: String = "",
 
 
 )
@@ -112,6 +122,11 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
     private var pickerTimeout: Job? = null
     private val attachmentDir = java.io.File(application.cacheDir, "attachments")
     private val drafts = mutableMapOf<String, String>()
+    private var lifecycleRequest: JSONObject? = null
+    private var lifecycleDigest: String? = null
+    private var lifecycleJob: Job? = null
+    private var pendingOperation = ""
+    private var pendingProfile = ""
 
     init {
         // Temporary copies never survive an application process restart.
@@ -125,9 +140,13 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
                 val savedSessions = try { withContext(Dispatchers.IO) { sessionVault.load() } }
                     catch (_: Exception) { recoveryLost = true; SavedSessions() }
                 savedSessions.entries.forEach { memos[it.profile + ":" + it.binding] = it }
+                pendingOperation = savedSessions.pendingOperation
+                pendingProfile = savedSessions.pendingProfile
                 importedKey = saved?.key
                 mutable.update { it.copy(ready = true, hasKey = saved != null, profile = saved?.profile ?: it.profile, saveDrafts = savedSessions.saveDrafts) }
-                mutable.update { it.copy(resumeTitle = lastMemo()?.title, message = if (recoveryLost) "恢复记录无法解锁。连接后请先核对原窗格，避免重复发送。" else it.message) }
+                mutable.update { it.copy(resumeTitle = lastMemo()?.title,
+                    lifecycleOperation = pendingOperation.takeIf { op -> op.isNotEmpty() && pendingProfile == profileId() },
+                    message = if (recoveryLost) "恢复记录无法解锁。连接后请先核对原窗格，避免重复发送。" else it.message) }
             } catch (_: Exception) {
                 mutable.update { it.copy(ready = true, message = "无法解锁保存的连接。可清除后重新配置。") }
             }
@@ -277,7 +296,8 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
                     result
                 } }
                 if (token != epoch) { withContext(Dispatchers.IO) { remote.close() }; return@launch }
-                mutable.update { it.copy(connected = true, busy = false, panes = panes, selected = null, output = emptyList(), message = null) }
+                mutable.update { it.copy(connected = true, busy = false, panes = panes, selected = null, output = emptyList(), message = null,
+                    lifecycleOperation = pendingOperation.takeIf { op -> op.isNotEmpty() && pendingProfile == profileId() }) }
                 val previous = if (resume) lastMemo() else null
                 val original = previous?.let { m -> panes.singleOrNull { it.identity == m.pane && it.canWrite } }
                 if (original != null) select(original, restored = previous)
@@ -289,6 +309,145 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
                 withContext(Dispatchers.IO) { remote.close() }
                 if (token == epoch) mutable.update { it.copy(busy = false, connected = false, message = if (e is IllegalStateException) e.message else "连接未完成，请核对网络、tmux 和本机凭据存储。") }
             } finally { key.fill(0); pass.fill(0) }
+        }
+    }
+    fun openLifecycle(mode: String, pane: Pane? = null) {
+        if (!state.value.connected || state.value.busy || state.value.lifecycleBusy) return
+        lifecycleRequest = null; lifecycleDigest = null
+        mutable.update { it.copy(lifecycleOpen = true, lifecycleMode = mode, lifecyclePane = pane,
+            lifecyclePreview = null, lifecycleStatus = "", lifecycleMachineStatus = "",
+            lifecycleOperation = pendingOperation.takeIf { it.isNotEmpty() && pendingProfile == profileId() }) }
+        if (mode.startsWith("restore")) {
+            val remote = client ?: return
+            val token = epoch
+            viewModelScope.launch {
+                try {
+                    val result = withContext(Dispatchers.IO) { io.withLock {
+                        JSONObject(remote.lifecycle(JSONObject().put("action", "threads").toString()))
+                    } }
+                    if (token == epoch && result.optBoolean("ok")) {
+                        val array = result.getJSONArray("threads")
+                        mutable.update { it.copy(lifecycleThreads = (0 until array.length()).map { i -> array.getJSONObject(i).let { t ->
+                            SavedThread(t.getString("id"), t.getString("path"), t.optString("created"))
+                        } }) }
+                    } else if (token == epoch) mutable.update { it.copy(lifecycleStatus = result.optString("error", "历史会话读取失败")) }
+                } catch (e: Exception) { if (token == epoch) mutable.update { it.copy(lifecycleStatus = "历史会话读取失败：${e.message.orEmpty().take(100)}") } }
+            }
+        }
+    }
+    fun closeLifecycle() {
+        if (state.value.lifecycleBusy && state.value.lifecycleMachineStatus !in listOf("cloning", "pulling")) return
+        if (state.value.lifecycleBusy) lifecycleJob?.cancel()
+        mutable.update { it.copy(lifecycleOpen = false, lifecycleBusy = false, lifecyclePreview = null) }
+        lifecycleRequest = null; lifecycleDigest = null
+    }
+    fun prepareLifecycle(session: String, path: String, thread: String, url: String, branch: String, pull: Boolean) {
+        val s = state.value
+        val remote = client ?: return
+        if (!s.connected || s.lifecycleBusy) return
+        val request = JSONObject().put("action", "prepare").put("mode", s.lifecycleMode)
+            .put("session", if (s.lifecycleMode == "restore_pane") s.lifecyclePane?.session.orEmpty() else session.trim())
+            .put("path", path.trim()).put("thread", thread.trim()).put("url", url.trim()).put("branch", branch.trim()).put("pull", pull)
+        val token = epoch
+        mutable.update { it.copy(lifecycleBusy = true, lifecyclePreview = null, lifecycleMachineStatus = "", lifecycleStatus = "正在核对目标…") }
+        viewModelScope.launch {
+            try {
+                val result = withContext(Dispatchers.IO) { io.withLock { JSONObject(remote.lifecycle(request.toString())) } }
+                if (token != epoch) return@launch
+                if (!result.optBoolean("ok")) throw IllegalStateException(result.optString("error", "预检失败"))
+                val p = result.getJSONObject("proposal")
+                lifecycleRequest = request
+                lifecycleDigest = result.getString("digest")
+                mutable.update { it.copy(lifecycleBusy = false,
+                    lifecyclePreview = "${p.getString("session")} · ${p.getString("path")}" +
+                        (if (p.optString("thread").isNotEmpty()) "\n恢复 ${p.getString("thread")}" else "\n启动新 Codex") +
+                        (if (p.optString("url").isNotEmpty()) "\n克隆 ${p.getString("url")}" +
+                            (if (p.optString("branch").isNotEmpty()) " · ${p.getString("branch")}" else " · 远端默认分支") else "") +
+                        (p.optJSONObject("git")?.let { "\n${it.getString("branch")}: ${it.getString("head").take(12)} → ${it.getString("remoteHead").take(12)}（仅快速前进）" } ?: ""),
+                    lifecycleStatus = "目标已核对，请确认启动。") }
+            } catch (e: Exception) { if (token == epoch) mutable.update { it.copy(lifecycleBusy = false, lifecycleStatus = e.message.orEmpty().take(200)) } }
+        }
+    }
+    fun startLifecycle() {
+        val request = lifecycleRequest ?: return
+        val digest = lifecycleDigest ?: return
+        if (!state.value.connected || state.value.lifecycleBusy) return
+        if (pendingOperation.isNotEmpty() && pendingProfile == profileId()) {
+            mutable.update { it.copy(lifecycleStatus = "请先核对或清除上次创建操作的结果。") }
+            return
+        }
+        val operation = java.util.UUID.randomUUID().toString()
+        val command = JSONObject(request.toString()).put("action", "start").put("operation", operation).put("digest", digest)
+        runLifecycle(command, operation, fresh = true)
+    }
+    fun inspectLifecycle() {
+        val operation = state.value.lifecycleOperation ?: return
+        if (!state.value.connected || state.value.lifecycleBusy) return
+        mutable.update { it.copy(lifecycleOpen = true, lifecycleMode = "inspect", lifecyclePreview = null, lifecycleMachineStatus = "") }
+        runLifecycle(JSONObject().put("action", "inspect").put("operation", operation), operation, fresh = false)
+    }
+    fun dismissLifecycleOperation() {
+        if (state.value.lifecycleBusy) return
+        pendingOperation = ""; pendingProfile = ""
+        mutable.update { it.copy(lifecycleOperation = null, lifecycleMachineStatus = "", lifecycleOpen = false) }
+        persist()
+    }
+    private fun runLifecycle(command: JSONObject, operation: String, fresh: Boolean) {
+        val remote = client ?: return
+        val token = epoch
+        mutable.update { it.copy(lifecycleBusy = true, lifecycleOperation = operation, lifecycleStatus = "正在核对操作结果…") }
+        lifecycleJob = viewModelScope.launch {
+            try {
+                var result = withContext(Dispatchers.IO) { io.withLock {
+                    if (fresh) {
+                        pendingOperation = operation; pendingProfile = profileId()
+                        storage.withLock { sessionVault.save(savedSnapshot()) }
+                    }
+                    JSONObject(remote.lifecycle(command.toString()))
+                } }
+                if (token != epoch) return@launch
+                if (!result.optBoolean("ok")) throw IllegalStateException(result.optString("error", "操作失败"))
+                repeat(240) {
+                    if (token != epoch || !state.value.connected) return@launch
+                    val status = result.optString("status")
+                    mutable.update { it.copy(lifecycleMachineStatus = status, lifecycleStatus = when (status) {
+                        "cloning" -> "正在克隆仓库；操作 ID：$operation"
+                        "pulling" -> "正在快速前进更新仓库；操作 ID：$operation"
+                        "starting" -> "正在启动 Codex；操作 ID：$operation"
+                        "cloned", "pulled" -> "项目准备完成，正在启动 Codex…"
+                        "started" -> "已启动 Codex，正在寻找窗格…"
+                        "failed" -> result.optString("error", "克隆失败")
+                        else -> "启动结果待核对；操作 ID：$operation"
+                    }) }
+                    if (status == "cloned" || status == "pulled") {
+                        result = withContext(Dispatchers.IO) { io.withLock { JSONObject(remote.lifecycle(JSONObject().put("action", "start").put("operation", operation).toString())) } }
+                    } else if (status == "started") {
+                        val panes = withContext(Dispatchers.IO) { io.withLock { remote.panes() } }
+                        if (token != epoch) return@launch
+                        val expected = result.optJSONObject("pane")
+                        val pane = expected?.let { e -> panes.singleOrNull { it.id == e.optString("id") && it.pid == e.optLong("pid") && it.serverPid == e.optLong("serverPid") } }
+                        if (pane != null && pane.canWrite) {
+                            pendingOperation = ""; pendingProfile = ""
+                            mutable.update { it.copy(lifecycleBusy = false, lifecycleOpen = false,
+                                lifecycleOperation = null, lifecycleMachineStatus = "", panes = panes) }
+                            persist()
+                            select(pane, terminal = true)
+                            return@launch
+                        }
+                        mutable.update { it.copy(panes = panes) }
+                    } else if (status == "failed" || status == "uncertain") {
+                        mutable.update { it.copy(lifecycleBusy = false) }
+                        return@launch
+                    }
+                    delay(1500)
+                    result = withContext(Dispatchers.IO) { io.withLock { JSONObject(remote.lifecycle(JSONObject().put("action", "inspect").put("operation", operation).toString())) } }
+                }
+                mutable.update { it.copy(lifecycleBusy = false, lifecycleStatus = "仍未确认启动结果。操作 ID：$operation；请检查目标窗格，不要重复启动。") }
+            } catch (e: Exception) {
+                if (e is CancellationException) throw e
+                if (token == epoch) mutable.update { it.copy(lifecycleBusy = false,
+                    lifecycleStatus = "结果待核对（操作 ID：$operation）：${e.message.orEmpty().take(100)}。请勿重复启动。") }
+            }
         }
     }
     fun select(pane: Pane, terminal: Boolean = false, restored: SessionMemo? = null) {
@@ -353,7 +512,7 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
         mutable.update { it.copy(resumeTitle = lastMemo()?.title) }
         persist()
     }
-    private fun savedSnapshot() = SavedSessions(state.value.saveDrafts, memos.values.toList())
+    private fun savedSnapshot() = SavedSessions(state.value.saveDrafts, memos.values.toList(), pendingOperation, pendingProfile)
     private fun persist() {
         persistJob?.cancel()
         persistJob = viewModelScope.launch {
@@ -690,7 +849,7 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
         client = null
         rememberSession()
         val uncertain = state.value.uncertain || state.value.busy && state.value.connected
-        mutable.update { it.copy(connected = false, busy = false, reconnecting = false, output = emptyList(), panes = emptyList(), selected = null, message = message, uncertain = uncertain, binding = null, messages = emptyList(), skills = emptyList(), panel = false) }
+        mutable.update { it.copy(connected = false, busy = false, reconnecting = false, output = emptyList(), panes = emptyList(), selected = null, message = message, uncertain = uncertain, binding = null, messages = emptyList(), skills = emptyList(), panel = false, lifecycleOpen = false, lifecycleBusy = false) }
         viewModelScope.launch(Dispatchers.IO) { old?.close() }
     }
     fun foreground(value: Boolean) {
@@ -718,6 +877,7 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
         drafts.clear()
         clearAttachments()
         persistJob?.cancel(); memos.clear(); cached.clear(); cursors.clear(); questionDrafts.clear()
+        pendingOperation = ""; pendingProfile = ""
         mutable.update { it.copy(busy = true, hasKey = false, draft = "") }
         viewModelScope.launch {
             try {
