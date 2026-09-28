@@ -13,8 +13,8 @@
 
 ```text
 浏览器 → rokano.org/terminal（整个子树的独立 Access 应用）
-       → 专用 Worker（覆盖并注入独立回源 Secret，保留 Origin）
-       → origin-home.rokano.org:8443/terminal / NPM（该子树的 Secret 检查）
+       → 现有 Worker（复用现有回源链路，保留 Origin）
+       → origin-home.rokano.org:8443/terminal / NPM（终端路径转发）
        → nas-terminal-front / nas-web-terminal:3000
        → RS256 JWT + 独立 aud + 邮箱白名单
        → 同 UID 的 tmux socket → NAS 上已有会话
@@ -64,16 +64,15 @@ docker network rm nas-terminal-test
 2. 本目录 `.env` 权限设为 `600`，填写 Team Domain、该新应用 AUD、`CF_ACCESS_ALLOWED_ORIGIN=https://rokano.org` 和精确允许邮箱。Origin **不带 `/terminal`**。UID/GID 与宿主 tmux 用户一致，socket 目录需由该用户创建，不放宽权限。
 3. 创建 `nas-terminal-front` 网络并执行 `docker compose up -d --build`。确认拒绝未配置请求后将 NPM 加入该网络，并在 NPM 的权威 Compose 中记录 external network。应用不发布宿主端口。
 4. 备份现有 NPM `origin-home.rokano.org` Host 的配置，在其 Advanced 中合并 [终端 location 模板](deploy/nginx-advanced.conf.example)，只新增精确 `/terminal` 与 `/terminal/` 子树，指向 `nas-web-terminal:3000`，**完整保留路径前缀**。不能替换该 Host 或覆盖已有 `/home`、`/` 路由；用 NPM 生成配置后运行 `nginx -t` 并验证既有服务。
-5. 生成独立 32 字节随机 Secret，安全保存在权限 600 的部署文件，并替换两个 location 的占位值；不提交、不输出到会话。Secret 检查只作用于终端子树。检查生成配置保留 Origin/JWT/WS 子协议并关闭该子树请求日志。
-6. 专用 [Worker](deploy/worker.mjs) 仅绑定 `rokano.org/terminal` 和 `rokano.org/terminal/*`，不接管 `rokano.org/*`。设置 `PUBLIC_ORIGIN=https://rokano.org`、`ORIGIN_URL=https://origin-home.rokano.org:8443` 和 Secret `ORIGIN_SECRET`。保留浏览器 Origin 和完整 `/terminal` 前缀；关闭 workers.dev。发布前核对现有 Worker 路由优先级，备份原路由；也可将此分支合并进现有 Worker，但不得改变其他路径行为。
-7. 沿用现有 `rokano.org` DNS，不创建终端专用域名或 DNS 记录。验证 TLS、CF-Ray、两个终端入口的 Access 跳转及 `/home` 等已有入口正常。
+5. 复用既有 `rokano.org` Worker 回源链路，本次不要求新建 Worker 或回源 Secret。确认该链路保留 Origin、Access JWT 和 WebSocket；本仓库 `deploy/worker.mjs` 是备用独立转发示例，当前未部署。终端授权边界是应用逐请求验证独立 Access JWT。
+6. 沿用现有 DNS，不新增域名。验证 `/terminal`、`/terminal/` 均受 Access 保护，以及 `/home`、`/stock` 原行为保持。NPM 可用本目录的 `deploy/npm-routing.mjs` 配合 location 模板添加/移除标记块；脚本仅操作现有 Host 7，备份后由 NPM 自身生成配置和重载。
 
 共享 origin 意味着同域其他应用的脚本也属于相同浏览器 Origin；Origin 校验不能隔离同域应用的 XSS。独立 Audience 仍用于服务端身份边界。退出登录使用 Cloudflare 的同域退出入口，可能同时影响该域其他 Access 会话。
 
 ### 上线验收
 
 - 匿名访问首页、资源、API、WebSocket 均被 Access 阻断/跳转；应用直连缺少或伪造 JWT 均为 403。
-- 直连家庭 IP/8443 指定 origin-home SNI/Host 请求 `/terminal`，缺少或伪造回源 Secret 被拒绝；即使有正确 Secret，错误 JWT 仍被应用拒绝。
+- 直连家庭 IP/8443 指定 origin-home SNI/Host 请求 `/terminal`，缺少或伪造 Access JWT 被应用拒绝。
 - 真实允许邮箱登录后能查看会话、连接专用测试会话、操作初始化提示和输入中文；手机竖屏和横屏可用。
 - 错误 Origin、重复票据不可连接；断线/到期不会结束 tmux 任务；重连不重放输入。
 - 完成后检查日志无 Cookie/JWT/票据/命令/终端输出。不要向助手提供浏览器凭据。
@@ -82,9 +81,9 @@ docker network rm nas-terminal-test
 
 ## 回滚
 
-本应用不修改 tmux 会话内容、不保存业务数据。停用终端专用 Worker routes，移除 NPM 中本次新增的两个终端 location（保留域名、DNS 和其他 location），执行 `docker compose down`，再 `docker network disconnect nas-terminal-front npm`。确认网络无成员后可以删除该网络。停容器仅释放终端 client，现有 tmux server/会话继续运行。不要执行 `tmux kill-server` 或删除 socket。
+本应用不修改 tmux 会话内容、不保存业务数据。移除 NPM 中本次新增的两个终端 location（保留域名、DNS 和其他 location），执行 `docker compose down`，再 `docker network disconnect nas-terminal-front npm`。确认网络无成员后可以删除该网络。停容器仅释放终端 client，现有 tmux server/会话继续运行。不要执行 `tmux kill-server` 或删除 socket。
 
-代码回退：恢复上个已验证 Git 提交的本目录及镜像标签，使用保留的 `.env` 重新 `docker compose up -d`。NPM 通过变更前备份恢复本次新增的终端 location；不覆盖其他服务的并发变更。Worker 与 Access 各自保留配置备份。
+代码回退：恢复上个已验证 Git 提交的本目录及镜像标签，使用保留的 `.env` 重新 `docker compose up -d`。NPM 通过变更前备份恢复本次新增的终端 location；不覆盖其他服务的并发变更。Access 变更单独保留配置备份。
 
 ## 官方资料
 

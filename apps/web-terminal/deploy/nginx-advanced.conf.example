@@ -1,13 +1,12 @@
 # Merge into existing origin-home.rokano.org NPM Advanced; preserve all existing configuration.
-# Replace both secret placeholders locally. Never commit the resulting configuration.
+# Shared existing Worker ingress; the terminal application verifies its own Access JWT on every request.
 location = /terminal {
-    if ($http_x_nas_terminal_origin != "REPLACE_WITH_64_HEX_WORKER_SECRET") { return 403; }
     if ($request_method !~ ^(GET|HEAD|POST)$) { return 403; }
     resolver 127.0.0.11 valid=30s;
     set $nas_terminal_upstream http://nas-web-terminal:3000;
     proxy_pass $nas_terminal_upstream$request_uri;
     proxy_http_version 1.1;
-    proxy_set_header Host $host;
+    proxy_set_header Host rokano.org;
     proxy_set_header Origin $http_origin;
     proxy_set_header Cf-Access-Jwt-Assertion $http_cf_access_jwt_assertion;
     proxy_set_header Upgrade $http_upgrade;
@@ -20,13 +19,12 @@ location = /terminal {
     error_log /dev/null crit;
 }
 location ^~ /terminal/ {
-    if ($http_x_nas_terminal_origin != "REPLACE_WITH_64_HEX_WORKER_SECRET") { return 403; }
     if ($request_method !~ ^(GET|HEAD|POST)$) { return 403; }
     resolver 127.0.0.11 valid=30s;
     set $nas_terminal_upstream http://nas-web-terminal:3000;
     proxy_pass $nas_terminal_upstream$request_uri;
     proxy_http_version 1.1;
-    proxy_set_header Host $host;
+    proxy_set_header Host rokano.org;
     proxy_set_header Origin $http_origin;
     proxy_set_header Cf-Access-Jwt-Assertion $http_cf_access_jwt_assertion;
     proxy_set_header Upgrade $http_upgrade;
