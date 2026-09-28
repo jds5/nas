@@ -1,8 +1,8 @@
 # 接续 · NAS Remote
 
-独立 Android 子项目：通过 SSH 接续 NAS 上正在运行的 Codex。当前为 0.5.0，默认展示聊天消息，普通输入框一次发送；原终端模式保留为可选入口。无需新端口或 NAS 常驻服务。
+独立 Android 子项目：通过 SSH 接续 NAS 上正在运行的 Codex。当前为 0.5.1，默认展示聊天消息，普通输入框一次发送；原终端模式保留为可选入口。无需新端口或 NAS 常驻服务。
 
-0.5.0 增加从手机恢复精确的历史 Codex UUID、在已有目录或新目录启动 tmux/Codex，以及克隆 Git 仓库；已有仓库的快速前进拉取须单独选择。交互和验收边界见[会话恢复与新建设计](../../docs/operations/手机接入现有tmux规划.md)。
+0.5.1 支持从手机恢复精确的历史 Codex UUID、在空闲窗格启动新对话、在已有目录或新目录启动 tmux/Codex，以及克隆 Git 仓库；已有仓库的快速前进拉取须单独选择。交互和验收边界见[会话恢复与新建设计](../../docs/operations/手机接入现有tmux规划.md)。
 
 ## 结构
 
@@ -80,6 +80,14 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 - 单条超过显示上限、超过 300 条历史、超过 1 MiB 的单条 JSON 记录或无法识别的界面需要终端核对。退出 App 后聊天内容不保存在手机；NAS 自身的 Codex 日志保留策略不受 App 控制。
 
 界面沿用稳定版 Material 3、动态配色和系统动画设置；聊天使用稳定消息 ID、惰性列表、轻量原生 Markdown 显示和列表过渡，网络与文件操作在 IO 线程。未连接 Android 真机/模拟器，不能宣称达到 60/90/120 Hz；本版仍需实机验证输入法、旋转、字体缩放、锁屏换网以及发送期间断网。
+
+## 0.5.1：修复项目启动和手机输入流程（2026-09-28）
+
+0.5.0 的 SSH 非交互环境可能找不到安装在 `~/.local/bin/codex` 的 CLI，导致 Git 已克隆、tmux 窗格已创建，但只留下空闲 bash。0.5.1 在任何目录/克隆写入前定位 Codex；找不到时直接显示错误。用户的 `work_doc` 现场出现了这一情况，已在现有 `work` 窗格复核空输入后手动启动 `codex --yolo`，没有重新克隆或另建会话。
+
+Git 克隆现在直接使用仓库名作为 `~/code` 下的目标目录；同名目录存在即停止。已有目录和空目录只填写相对 `~/code` 的路径，tmux 名称留空时由目录名生成。窗格列表的空闲 bash 提供“启动 Codex”，可选新建对话或恢复历史 UUID。所有模式都有可编辑的 Codex 启动参数，界面默认填入 `--yolo`，用户可删除；该参数会跳过 Codex 的审批与沙箱，含义见[官方 OpenAI Docs](https://learn.chatgpt.com/docs/developer-commands)。点“启动 Codex”后自动完成内部预检并执行，没有预览和第二次确认；断线或结果不明确时仍可查看上次任务状态，不自动重复发送命令。
+
+49 项 Python、22 项 JVM 与 3 项下载服务测试通过；Debug/Release 构建和 Lint 通过。0.5.1（versionCode 11）个人测试包已发布到 [LAN 下载页](http://192.168.50.33:8765/)，3,371,085 字节，SHA-256：`367752ff67247882e778a44287aa0e31d1136a987727cd4ac7c0a0775960012a`。签名与 0.5.0 相同，实际 HTTP 下载、页面和 SHA256SUMS 一致；旧包保留。下载服务旧 unit 备份为 `~/.config/systemd/user/nas-app-download.service.before-0.5.1`，回滚下载页可复制该备份回原 unit，执行 `systemctl --user daemon-reload` 和 `systemctl --user restart nas-app-download.service`。手机仍需手动安装并验证完整流程。
 
 ## 0.5.0：恢复历史对话与新建项目会话（2026-09-28）
 

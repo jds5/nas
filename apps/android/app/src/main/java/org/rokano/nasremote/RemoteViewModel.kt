@@ -77,7 +77,6 @@ data class RemoteState(
     val lifecycleMode: String = "",
     val lifecyclePane: Pane? = null,
     val lifecycleThreads: List<SavedThread> = emptyList(),
-    val lifecyclePreview: String? = null,
     val lifecycleStatus: String = "",
     val lifecycleOperation: String? = null,
     val lifecycleBusy: Boolean = false,
@@ -122,8 +121,6 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
     private var pickerTimeout: Job? = null
     private val attachmentDir = java.io.File(application.cacheDir, "attachments")
     private val drafts = mutableMapOf<String, String>()
-    private var lifecycleRequest: JSONObject? = null
-    private var lifecycleDigest: String? = null
     private var lifecycleJob: Job? = null
     private var pendingOperation = ""
     private var pendingProfile = ""
@@ -313,9 +310,8 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
     }
     fun openLifecycle(mode: String, pane: Pane? = null) {
         if (!state.value.connected || state.value.busy || state.value.lifecycleBusy) return
-        lifecycleRequest = null; lifecycleDigest = null
         mutable.update { it.copy(lifecycleOpen = true, lifecycleMode = mode, lifecyclePane = pane,
-            lifecyclePreview = null, lifecycleStatus = "", lifecycleMachineStatus = "",
+            lifecycleStatus = "", lifecycleMachineStatus = "",
             lifecycleOperation = pendingOperation.takeIf { it.isNotEmpty() && pendingProfile == profileId() }) }
         if (mode.startsWith("restore")) {
             val remote = client ?: return
@@ -338,52 +334,34 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
     fun closeLifecycle() {
         if (state.value.lifecycleBusy && state.value.lifecycleMachineStatus !in listOf("cloning", "pulling")) return
         if (state.value.lifecycleBusy) lifecycleJob?.cancel()
-        mutable.update { it.copy(lifecycleOpen = false, lifecycleBusy = false, lifecyclePreview = null) }
-        lifecycleRequest = null; lifecycleDigest = null
+        mutable.update { it.copy(lifecycleOpen = false, lifecycleBusy = false) }
     }
-    fun prepareLifecycle(session: String, path: String, thread: String, url: String, branch: String, pull: Boolean) {
+    fun prepareLifecycle(session: String, path: String, thread: String, url: String, branch: String, pull: Boolean, args: String) {
         val s = state.value
         val remote = client ?: return
         if (!s.connected || s.lifecycleBusy) return
         val request = JSONObject().put("action", "prepare").put("mode", s.lifecycleMode)
-            .put("session", if (s.lifecycleMode == "restore_pane") s.lifecyclePane?.session.orEmpty() else session.trim())
+            .put("session", if (s.lifecycleMode in listOf("restore_pane", "new_pane")) s.lifecyclePane?.session.orEmpty() else session.trim())
             .put("path", path.trim()).put("thread", thread.trim()).put("url", url.trim()).put("branch", branch.trim()).put("pull", pull)
+            .put("args", args.trim())
         val token = epoch
-        mutable.update { it.copy(lifecycleBusy = true, lifecyclePreview = null, lifecycleMachineStatus = "", lifecycleStatus = "正在核对目标…") }
+        mutable.update { it.copy(lifecycleBusy = true, lifecycleMachineStatus = "", lifecycleStatus = "正在检查并启动…") }
         viewModelScope.launch {
             try {
                 val result = withContext(Dispatchers.IO) { io.withLock { JSONObject(remote.lifecycle(request.toString())) } }
                 if (token != epoch) return@launch
                 if (!result.optBoolean("ok")) throw IllegalStateException(result.optString("error", "预检失败"))
-                val p = result.getJSONObject("proposal")
-                lifecycleRequest = request
-                lifecycleDigest = result.getString("digest")
-                mutable.update { it.copy(lifecycleBusy = false,
-                    lifecyclePreview = "${p.getString("session")} · ${p.getString("path")}" +
-                        (if (p.optString("thread").isNotEmpty()) "\n恢复 ${p.getString("thread")}" else "\n启动新 Codex") +
-                        (if (p.optString("url").isNotEmpty()) "\n克隆 ${p.getString("url")}" +
-                            (if (p.optString("branch").isNotEmpty()) " · ${p.getString("branch")}" else " · 远端默认分支") else "") +
-                        (p.optJSONObject("git")?.let { "\n${it.getString("branch")}: ${it.getString("head").take(12)} → ${it.getString("remoteHead").take(12)}（仅快速前进）" } ?: ""),
-                    lifecycleStatus = "目标已核对，请确认启动。") }
+                val operation = java.util.UUID.randomUUID().toString()
+                val command = JSONObject(request.toString()).put("action", "start")
+                    .put("operation", operation).put("digest", result.getString("digest"))
+                runLifecycle(command, operation, fresh = true)
             } catch (e: Exception) { if (token == epoch) mutable.update { it.copy(lifecycleBusy = false, lifecycleStatus = e.message.orEmpty().take(200)) } }
         }
-    }
-    fun startLifecycle() {
-        val request = lifecycleRequest ?: return
-        val digest = lifecycleDigest ?: return
-        if (!state.value.connected || state.value.lifecycleBusy) return
-        if (pendingOperation.isNotEmpty() && pendingProfile == profileId()) {
-            mutable.update { it.copy(lifecycleStatus = "请先核对或清除上次创建操作的结果。") }
-            return
-        }
-        val operation = java.util.UUID.randomUUID().toString()
-        val command = JSONObject(request.toString()).put("action", "start").put("operation", operation).put("digest", digest)
-        runLifecycle(command, operation, fresh = true)
     }
     fun inspectLifecycle() {
         val operation = state.value.lifecycleOperation ?: return
         if (!state.value.connected || state.value.lifecycleBusy) return
-        mutable.update { it.copy(lifecycleOpen = true, lifecycleMode = "inspect", lifecyclePreview = null, lifecycleMachineStatus = "") }
+        mutable.update { it.copy(lifecycleOpen = true, lifecycleMode = "inspect", lifecycleMachineStatus = "") }
         runLifecycle(JSONObject().put("action", "inspect").put("operation", operation), operation, fresh = false)
     }
     fun dismissLifecycleOperation() {
@@ -395,7 +373,7 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
     private fun runLifecycle(command: JSONObject, operation: String, fresh: Boolean) {
         val remote = client ?: return
         val token = epoch
-        mutable.update { it.copy(lifecycleBusy = true, lifecycleOperation = operation, lifecycleStatus = "正在核对操作结果…") }
+        mutable.update { it.copy(lifecycleBusy = true, lifecycleOperation = operation, lifecycleStatus = "正在查询启动状态…") }
         lifecycleJob = viewModelScope.launch {
             try {
                 var result = withContext(Dispatchers.IO) { io.withLock {
@@ -406,8 +384,17 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
                     JSONObject(remote.lifecycle(command.toString()))
                 } }
                 if (token != epoch) return@launch
-                if (!result.optBoolean("ok")) throw IllegalStateException(result.optString("error", "操作失败"))
-                repeat(240) {
+                if (!result.optBoolean("ok")) {
+                    if (fresh) {
+                        pendingOperation = ""; pendingProfile = ""
+                        persist()
+                    }
+                    mutable.update { it.copy(lifecycleBusy = false,
+                        lifecycleOperation = if (fresh) null else it.lifecycleOperation,
+                        lifecycleStatus = result.optString("error", "启动失败")) }
+                    return@launch
+                }
+                repeat(240) { attempt ->
                     if (token != epoch || !state.value.connected) return@launch
                     val status = result.optString("status")
                     mutable.update { it.copy(lifecycleMachineStatus = status, lifecycleStatus = when (status) {
@@ -416,8 +403,8 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
                         "starting" -> "正在启动 Codex；操作 ID：$operation"
                         "cloned", "pulled" -> "项目准备完成，正在启动 Codex…"
                         "started" -> "已启动 Codex，正在寻找窗格…"
-                        "failed" -> result.optString("error", "克隆失败")
-                        else -> "启动结果待核对；操作 ID：$operation"
+                        "failed", "uncertain" -> result.optString("error", "启动失败；操作 ID：$operation")
+                        else -> "启动结果未确定；操作 ID：$operation"
                     }) }
                     if (status == "cloned" || status == "pulled") {
                         result = withContext(Dispatchers.IO) { io.withLock { JSONObject(remote.lifecycle(JSONObject().put("action", "start").put("operation", operation).toString())) } }
@@ -434,6 +421,12 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
                             select(pane, terminal = true)
                             return@launch
                         }
+                        if (attempt >= 3 && pane?.command == "bash") {
+                            mutable.update { it.copy(lifecycleBusy = false,
+                                lifecycleMachineStatus = "uncertain",
+                                lifecycleStatus = "Codex 启动后已退出；请打开 ${pane.session} 窗格查看错误。") }
+                            return@launch
+                        }
                         mutable.update { it.copy(panes = panes) }
                     } else if (status == "failed" || status == "uncertain") {
                         mutable.update { it.copy(lifecycleBusy = false) }
@@ -446,7 +439,7 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
             } catch (e: Exception) {
                 if (e is CancellationException) throw e
                 if (token == epoch) mutable.update { it.copy(lifecycleBusy = false,
-                    lifecycleStatus = "结果待核对（操作 ID：$operation）：${e.message.orEmpty().take(100)}。请勿重复启动。") }
+                    lifecycleStatus = "启动结果暂不明确（操作 ID：$operation）：${e.message.orEmpty().take(100)}。请勿重复启动。") }
             }
         }
     }

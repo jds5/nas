@@ -54,6 +54,20 @@ def valid_name(value):
     return value
 
 
+def default_session(path):
+    name = re.sub(r'[^A-Za-z0-9_-]', '_', Path(path).name)[:38]
+    return valid_name(name if name and name[0].isalpha() else 's_' + name)
+
+
+def project_input(value, *, exists=True):
+    if not isinstance(value, str) or not value or len(value) > 500 or value.startswith('/') or '\x00' in value:
+        raise Refused('请填写 ~/code 下的相对路径')
+    parts = value.split('/')
+    if any(part in ('', '.', '..') for part in parts):
+        raise Refused('项目相对路径不能包含空段、. 或 ..')
+    return project(str(PROJECTS.joinpath(*parts)), exists=exists)
+
+
 def project(path, *, exists=True):
     if not isinstance(path, str) or len(path) > 500 or not path.startswith('/') or '\x00' in path:
         raise Refused('项目路径无效')
@@ -69,6 +83,37 @@ def project(path, *, exists=True):
     elif actual.parent != root or item.exists() or item.is_symlink():
         raise Refused('新项目须是 ~/code 下尚不存在的一级目录')
     return actual
+
+
+def clone_name(url):
+    from urllib.parse import urlsplit, unquote
+    path = urlsplit(url).path if '://' in url else url.split(':', 1)[1]
+    name = unquote(path.rstrip('/').rsplit('/', 1)[-1])
+    if name.endswith('.git'):
+        name = name[:-4]
+    if not name or name in ('.', '..') or '/' in name or '\\' in name or any(ord(c) < 32 for c in name):
+        raise Refused('无法从 Git 地址确定安全的目录名')
+    return name
+
+
+def codex_binary():
+    candidates = [shutil.which('codex'), str(HOME / '.local' / 'bin' / 'codex'), '/usr/local/bin/codex']
+    for candidate in candidates:
+        if candidate and Path(candidate).is_file() and os.access(candidate, os.X_OK):
+            return candidate
+    raise Refused('NAS 上找不到 Codex CLI；请检查 ~/.local/bin/codex')
+
+
+def codex_args(value):
+    if not isinstance(value, str) or len(value) > 500 or any(ord(c) < 32 or ord(c) == 127 for c in value):
+        raise Refused('Codex 启动参数无效')
+    try:
+        args = shlex.split(value)
+    except ValueError:
+        raise Refused('Codex 启动参数引号未闭合')
+    if len(args) > 24 or any(len(arg) > 200 for arg in args):
+        raise Refused('Codex 启动参数过长')
+    return args
 
 
 def current_panes():
@@ -176,11 +221,8 @@ def empty_shell(pane, *, owned=False):
     if pane['y'] >= len(lines):
         raise Refused('无法确认 shell 输入行')
     row = lines[pane['y']].rstrip()
-    if owned:
-        valid = row == 'NAS_REMOTE_READY$'
-    else:
-        prefix = pwd.getpwuid(os.getuid()).pw_name + '@' + socket.gethostname().split('.')[0] + ':'
-        valid = re.fullmatch(re.escape(prefix) + r'[^\n]*\$', row)
+    prefix = pwd.getpwuid(os.getuid()).pw_name + '@' + socket.gethostname().split('.')[0] + ':'
+    valid = row == 'NAS_REMOTE_READY$' or (not owned and re.fullmatch(re.escape(prefix) + r'[^\n]*\$', row))
     if not valid or not len(row) <= pane['x'] <= len(row) + 2:
         raise Refused('目标 shell 有输入或提示符无法确认')
 
@@ -239,43 +281,50 @@ def pull_preview(path):
 
 def proposal(req):
     mode = req.get('mode')
-    if mode not in ('restore_pane', 'restore_new', 'existing', 'empty', 'clone'):
+    if mode not in ('restore_pane', 'new_pane', 'restore_new', 'existing', 'empty', 'clone'):
         raise Refused('操作类型无效')
-    session = valid_name(req.get('session'))
-    panes = [p for p in current_panes() if p['session'] == session]
-    if mode == 'restore_pane':
-        item = thread(req.get('thread'))
+    codex = codex_binary()
+    args = codex_args(req.get('args', ''))
+    item = None
+    pane = None
+    url = git_url(req.get('url')) if mode == 'clone' else ''
+    branch = valid_branch(req.get('branch')) if mode == 'clone' else ''
+    if mode in ('restore_pane', 'new_pane'):
+        session = valid_name(req.get('session'))
         pane = one_pane(session)
-        if pane['path'] != item['path']:
-            raise Refused('窗格目录与历史会话原目录不符')
+        if mode == 'restore_pane':
+            item = thread(req.get('thread'))
+            if pane['path'] != item['path']:
+                raise Refused('窗格目录与历史会话原目录不符')
+            path = item['path']
+        else:
+            path = str(project(pane['path']))
         empty_shell(pane)
-        path = item['path']
     elif mode == 'restore_new':
         item = thread(req.get('thread'))
         path = item['path']
-        if panes:
-            raise Refused('tmux 名称已存在')
+        session = valid_name(req.get('session') or default_session(path))
     elif mode == 'existing':
-        path = str(project(req.get('path')))
-        item = None
-        if panes:
-            raise Refused('tmux 名称已存在')
+        path = str(project_input(req.get('path')))
+        session = valid_name(req.get('session') or default_session(path))
+    elif mode == 'clone':
+        path = str(project_input(clone_name(url), exists=False))
+        session = valid_name(req.get('session') or default_session(path))
     else:
-        path = str(project(req.get('path'), exists=False))
-        item = None
-        if panes:
-            raise Refused('tmux 名称已存在')
+        path = str(project_input(req.get('path'), exists=False))
+        session = valid_name(req.get('session') or default_session(path))
+    if mode not in ('restore_pane', 'new_pane') and any(p['session'] == session for p in current_panes()):
+        raise Refused('tmux 名称已存在，请修改会话名称')
     if item and thread_file_open(item['file']):
         raise Refused('该 Codex 会话已在其他窗格运行')
-    url = git_url(req.get('url')) if mode == 'clone' else ''
-    branch = valid_branch(req.get('branch')) if mode == 'clone' else ''
     pull = req.get('pull') is True
     if pull and mode != 'existing':
         raise Refused('只可更新已有目录')
     git = pull_preview(path) if pull else None
     result = dict(mode=mode, session=session, path=path, thread=item['id'] if item else '',
                   inode=item['inode'] if item else 0, url=url, branch=branch, pull=pull, git=git,
-                  pane={k: pane[k] for k in ('id', 'pid', 'serverPid')} if mode == 'restore_pane' else None)
+                  args=args, codex=codex,
+                  pane={k: pane[k] for k in ('id', 'pid', 'serverPid')} if pane else None)
     return result
 
 
@@ -318,7 +367,7 @@ def read_status(path):
 
 def launch(p):
     path = p['path']
-    if p['mode'] != 'restore_pane':
+    if p['mode'] not in ('restore_pane', 'new_pane'):
         tmux('new-session', '-d', '-s', p['session'], '-c', path,
              "PS1='NAS_REMOTE_READY$ ' exec /bin/bash --noprofile --norc -i")
         pane = one_pane(p['session'])
@@ -340,11 +389,14 @@ def launch(p):
         pane = one_pane(p['session'])
         if {k: pane[k] for k in ('id', 'pid', 'serverPid')} != p['pane']:
             raise Refused('原窗格身份已变化')
+        if pane['path'] != path:
+            raise Refused('原窗格目录已变化')
         empty_shell(pane)
-    codex = shutil.which('codex')
-    if not codex:
-        raise Refused('NAS 上找不到 Codex CLI')
-    command = shlex.quote(codex) + (' resume ' + p['thread'] if p['thread'] else '')
+    codex = p['codex']
+    if not Path(codex).is_file() or not os.access(codex, os.X_OK):
+        raise Refused('Codex CLI 已变化或不可执行')
+    command = ' '.join(shlex.quote(part) for part in [codex, *p['args'],
+                      *(['resume', p['thread']] if p['thread'] else [])])
     tmux('send-keys', '-l', '-t', pane['id'], command)
     tmux('send-keys', '-t', pane['id'], 'Enter')
     return {k: pane[k] for k in ('id', 'pid', 'serverPid', 'session', 'path')}

@@ -23,6 +23,10 @@ class LifecycleTests(unittest.TestCase):
         self.root = Path(self.temp.name)
         self.code = self.root / 'code'
         self.code.mkdir()
+        local_bin = self.root / '.local' / 'bin'
+        local_bin.mkdir(parents=True)
+        (local_bin / 'codex').write_text('#!/bin/sh\nsleep 5\n')
+        (local_bin / 'codex').chmod(0o755)
         self.socket = 'nas-life-' + uuid.uuid4().hex
         self.env = patch.dict(os.environ, {'NAS_REMOTE_TEST_TMUX_SOCKET': self.socket})
         self.env.start()
@@ -55,6 +59,23 @@ class LifecycleTests(unittest.TestCase):
             with self.assertRaises(lifecycle.Refused):
                 lifecycle.git_url(url)
         self.assertEqual(lifecycle.git_url('git@example.org:owner/repo.git'), 'git@example.org:owner/repo.git')
+        with self.assertRaises(lifecycle.Refused):
+            lifecycle.project_input('../outside')
+        with self.assertRaises(lifecycle.Refused):
+            lifecycle.project_input(str(outside))
+        self.assertEqual(lifecycle.clone_name('git@example.org:owner/work_doc.git'), 'work_doc')
+        (self.code / 'demo').mkdir()
+        preview = lifecycle.handle({'action': 'prepare', 'mode': 'existing', 'path': 'demo', 'args': '--yolo'})
+        self.assertEqual(preview['proposal']['session'], 'demo')
+        self.assertEqual(preview['proposal']['path'], str(self.code / 'demo'))
+        with patch.object(lifecycle, 'codex_binary', side_effect=lifecycle.Refused('找不到 Codex')):
+            with self.assertRaises(lifecycle.Refused):
+                lifecycle.handle({'action': 'prepare', 'mode': 'empty', 'path': 'missing'})
+        self.assertFalse((self.code / 'missing').exists())
+        (self.code / 'work_doc').mkdir()
+        with patch.object(lifecycle, 'git_url', lambda value: value):
+            with self.assertRaises(lifecycle.Refused):
+                lifecycle.handle({'action': 'prepare', 'mode': 'clone', 'url': 'git@example.org:owner/work_doc.git'})
 
     @unittest.skipUnless(os.environ.get('NAS_TMUX_TESTS') == '1', 'Set NAS_TMUX_TESTS=1')
     def test_new_session_starts_once_and_resume_uses_exact_uuid(self):
@@ -66,7 +87,7 @@ class LifecycleTests(unittest.TestCase):
         fake.write_text('#!/bin/sh\nsleep 5\n')
         fake.chmod(0o755)
         with patch.dict(os.environ, {'PATH': str(bin_dir) + ':' + os.environ['PATH']}):
-            request = {'action': 'prepare', 'mode': 'existing', 'session': 'demo', 'path': str(project)}
+            request = {'action': 'prepare', 'mode': 'existing', 'session': 'demo', 'path': 'demo'}
             preview = lifecycle.handle(request)
             operation = str(uuid.uuid4())
             result = lifecycle.handle(dict(request, action='start', operation=operation, digest=preview['digest']))
@@ -80,20 +101,49 @@ class LifecycleTests(unittest.TestCase):
         (sessions / ('rollout-test-' + ident + '.jsonl')).write_text(json.dumps({
             'type': 'session_meta', 'timestamp': '2026-09-28T00:00:00Z',
             'payload': {'id': ident, 'cwd': str(project)}}) + '\n')
-        request = {'action': 'prepare', 'mode': 'restore_new', 'session': 'recovered', 'thread': ident}
-        preview = lifecycle.handle(request)
-        self.assertEqual(preview['proposal']['thread'], ident)
-        self.assertEqual(preview['proposal']['path'], str(project))
+        request = {'action': 'prepare', 'mode': 'restore_new', 'session': 'recovered', 'thread': ident, 'args': '--yolo'}
         args_file = self.root / 'codex-args'
         fake.write_text('#!/bin/sh\nprintf "%s\\n" "$@" > ' + str(args_file) + '\nsleep 5\n')
         with patch.dict(os.environ, {'PATH': str(bin_dir) + ':' + os.environ['PATH']}):
+            preview = lifecycle.handle(request)
+            self.assertEqual(preview['proposal']['thread'], ident)
+            self.assertEqual(preview['proposal']['path'], str(project))
             result = lifecycle.handle(dict(request, action='start', operation=str(uuid.uuid4()), digest=preview['digest']))
         self.assertEqual(result['status'], 'started', result.get('error'))
         for _ in range(30):
             if args_file.exists():
                 break
             time.sleep(.05)
-        self.assertEqual(args_file.read_text().splitlines(), ['resume', ident])
+        self.assertEqual(args_file.read_text().splitlines(), ['--yolo', 'resume', ident])
+
+    @unittest.skipUnless(os.environ.get('NAS_TMUX_TESTS') == '1', 'Set NAS_TMUX_TESTS=1')
+    def test_idle_pane_starts_new_codex_with_arguments_and_local_binary(self):
+        project = self.code / 'work_doc'
+        project.mkdir()
+        args_file = self.root / 'codex-args'
+        fake = self.root / '.local' / 'bin' / 'codex'
+        fake.write_text('#!/bin/sh\nprintf "%s\\n" "$@" > ' + str(args_file) + '\nsleep 5\n')
+        lifecycle.tmux('new-session', '-d', '-s', 'work', '-c', str(project),
+                       "PS1='NAS_REMOTE_READY$ ' exec /bin/bash --noprofile --norc -i")
+        with patch.object(lifecycle.shutil, 'which', return_value=None):
+            request = {'action': 'prepare', 'mode': 'new_pane', 'session': 'work',
+                       'args': "--yolo --model 'test model'"}
+            for _ in range(30):
+                try:
+                    preview = lifecycle.handle(request)
+                    break
+                except lifecycle.Refused:
+                    time.sleep(.1)
+            else:
+                self.fail('测试 shell 未就绪')
+            self.assertEqual(preview['proposal']['codex'], str(fake))
+            result = lifecycle.handle(dict(request, action='start', operation=str(uuid.uuid4()), digest=preview['digest']))
+        self.assertEqual(result['status'], 'started', result.get('error'))
+        for _ in range(30):
+            if args_file.exists():
+                break
+            time.sleep(.05)
+        self.assertEqual(args_file.read_text().splitlines(), ['--yolo', '--model', 'test model'])
 
     @unittest.skipUnless(os.environ.get('NAS_TMUX_TESTS') == '1', 'Set NAS_TMUX_TESTS=1')
     def test_clone_and_fast_forward_pull_use_temp_repository(self):
@@ -108,8 +158,8 @@ class LifecycleTests(unittest.TestCase):
         bare = self.root / 'remote.git'
         self.git(self.root, 'clone', '--bare', str(source), str(bare))
         target = self.code / 'cloned'
-        with patch.object(lifecycle, 'git_url', lambda value: value):
-            request = {'action': 'prepare', 'mode': 'clone', 'session': 'music', 'path': str(target), 'url': str(bare)}
+        with patch.object(lifecycle, 'git_url', lambda value: value), patch.object(lifecycle, 'clone_name', lambda value: 'cloned'):
+            request = {'action': 'prepare', 'mode': 'clone', 'session': 'music', 'url': str(bare)}
             preview = lifecycle.handle(request)
             operation = str(uuid.uuid4())
             lifecycle.handle(dict(request, action='start', operation=operation, digest=preview['digest']))
@@ -122,7 +172,7 @@ class LifecycleTests(unittest.TestCase):
             self.git(source, 'commit', '-m', 'two')
             self.git(source, 'remote', 'add', 'origin', str(bare))
             self.git(source, 'push', 'origin', 'master')
-            request = {'action': 'prepare', 'mode': 'existing', 'session': 'updated', 'path': str(target), 'pull': True}
+            request = {'action': 'prepare', 'mode': 'existing', 'session': 'updated', 'path': 'cloned', 'pull': True}
             preview = lifecycle.handle(request)
             operation = str(uuid.uuid4())
             lifecycle.handle(dict(request, action='start', operation=operation, digest=preview['digest']))
