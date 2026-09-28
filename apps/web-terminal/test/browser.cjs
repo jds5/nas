@@ -18,7 +18,7 @@ async function until(check) {
         const message = JSON.parse(payload);
         if (message.type === 'output') output += message.data;
       }));
-      await page.goto('http://terminal-fixture:3000');
+      await page.goto('http://terminal-fixture:3000/terminal');
       await page.getByRole('button', { name: /demo-project/ }).waitFor();
       await page.screenshot({ path: `/artifacts/${label}-sessions.png` });
       await page.getByRole('button', { name: /demo-project/ }).click();

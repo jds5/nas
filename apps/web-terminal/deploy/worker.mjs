@@ -1,4 +1,4 @@
-// Cloudflare Module Worker. Configure the route terminal.rokano.org/*; disable workers.dev.
+// Cloudflare Module Worker. Route only rokano.org/terminal and rokano.org/terminal/*; disable workers.dev.
 // Set PUBLIC_ORIGIN / ORIGIN_URL as variables, ORIGIN_SECRET as a Worker Secret.
 export default {
   async fetch(request, env) {
@@ -12,7 +12,8 @@ export default {
           !/^[a-f0-9]{64}$/.test(env.ORIGIN_SECRET || '')) throw new Error();
     } catch { return new Response('Unavailable', { status: 503 }); }
     const incoming = new URL(request.url);
-    if (incoming.origin !== publicOrigin.origin || !['GET', 'HEAD', 'POST'].includes(request.method)) {
+    if (incoming.origin !== publicOrigin.origin ||
+        !(incoming.pathname === '/terminal' || incoming.pathname.startsWith('/terminal/')) || !['GET', 'HEAD', 'POST'].includes(request.method)) {
       return new Response('Forbidden', { status: 403 });
     }
     upstream.pathname = incoming.pathname;

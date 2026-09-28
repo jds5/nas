@@ -23,12 +23,12 @@ async function request(path, { assertion, payload, origin = config.origin, csrf 
   }, body: payload ? JSON.stringify(payload) : undefined });
 }
 async function reservation(assertion, ref) {
-  const response = await request('/manage/api/connections', { assertion, payload: ref });
+  const response = await request('/terminal/manage/api/connections', { assertion, payload: ref });
   assert.equal(response.status, 201);
   return (await response.json()).ticket;
 }
 function wsConnect(assertion, ticket, origin = config.origin) {
-  return new WebSocket(url.replace('http:', 'ws:') + '/manage/ws', ['nas-terminal.v1', `ticket.${ticket}`],
+  return new WebSocket(url.replace('http:', 'ws:') + '/terminal/manage/ws', ['nas-terminal.v1', `ticket.${ticket}`],
     { origin, headers: { 'cf-access-jwt-assertion': assertion } });
 }
 async function deniedWS(ws) {
@@ -57,7 +57,7 @@ test('configuration rejects missing values, non-HTTPS origins and issuer paths',
   assert.equal(accessConfig({ ...env, CF_ACCESS_ALLOWED_ORIGIN: 'http://terminal.example.test' }), null);
 });
 test('all paths, assets and methods require a valid signed human identity', async () => {
-  for (const path of ['/', '/assets/app.js', '/assets/app.css', '/manage/api/sessions', '/unknown']) {
+  for (const path of ['/terminal', '/terminal/', '/terminal/assets/app.js', '/terminal/assets/app.css', '/terminal/manage/api/sessions', '/unknown']) {
     const response = await request(path);
     assert.equal(response.status, 403); assert.equal(response.headers.get('cache-control'), 'no-store');
     assert.equal((await request(path, { assertion: 'forged' })).status, 403);
@@ -65,13 +65,20 @@ test('all paths, assets and methods require a valid signed human identity', asyn
   const now = Math.floor(Date.now() / 1000);
   for (const claims of [{ exp: now - 1 }, { aud: 'home-audience' }, { iss: 'https://other.cloudflareaccess.com' },
     { nbf: now + 120 }, { email: 'stranger@example.test' }, { type: 'service' }, { exp: undefined }, { sub: undefined }, { iat: now + 120 }]) {
-    assert.equal((await request('/manage/api/sessions', { assertion: await token(claims) })).status, 403);
+    assert.equal((await request('/terminal/manage/api/sessions', { assertion: await token(claims) })).status, 403);
   }
   const assertion = await token();
-  for (const method of ['OPTIONS', 'PUT', 'DELETE', 'PATCH', 'POST']) assert.equal((await request('/', { assertion, method })).status, 403);
-  assert.equal((await request('/', { assertion })).status, 200);
-  assert.equal((await request('/assets/app.js', { assertion })).status, 200);
-  assert.equal((await request('/assets/../server/main.mjs', { assertion })).status, 404);
+  for (const method of ['OPTIONS', 'PUT', 'DELETE', 'PATCH', 'POST']) assert.equal((await request('/terminal', { assertion, method })).status, 403);
+  assert.equal((await request('/terminal', { assertion })).status, 200);
+  assert.equal((await request('/terminal/', { assertion })).status, 200);
+  for (const path of ['/', '/assets/app.js', '/manage/api/sessions', '/terminal-other']) {
+    assert.equal((await request(path, { assertion })).status, 404);
+  }
+  const html = await (await request('/terminal', { assertion })).text();
+  assert.ok(html.includes('src="/terminal/assets/app.js"'));
+  assert.ok(html.includes('href="/terminal/assets/app.css"'));
+  assert.equal((await request('/terminal/assets/app.js', { assertion })).status, 200);
+  assert.equal((await request('/terminal/assets/../server/main.mjs', { assertion })).status, 404);
 });
 test('missing configuration fails closed even with otherwise valid JWT', async () => {
   const isolated = createApp({ config: null, keyResolver: keys, tmux });
@@ -82,10 +89,10 @@ test('missing configuration fails closed even with otherwise valid JWT', async (
 test('POST requires exact Origin and custom CSRF header; stale session rejected without attaching', async () => {
   const assertion = await token(); const ref = (await tmux.list())[0];
   for (const options of [{ origin: '' }, { origin: 'https://evil.test' }, { csrf: '' }, { csrf: 'https://evil.test' }]) {
-    assert.equal((await request('/manage/api/connections', { assertion, payload: ref, ...options })).status, 403);
+    assert.equal((await request('/terminal/manage/api/connections', { assertion, payload: ref, ...options })).status, 403);
   }
-  assert.equal((await request('/manage/api/connections', { assertion, payload: { ...ref, generation: 'stale' } })).status, 409);
-  assert.equal((await request('/manage/api/connections', { assertion, payload: { ...ref, id: ';echo bad' } })).status, 409);
+  assert.equal((await request('/terminal/manage/api/connections', { assertion, payload: { ...ref, generation: 'stale' } })).status, 409);
+  assert.equal((await request('/terminal/manage/api/connections', { assertion, payload: { ...ref, id: ';echo bad' } })).status, 409);
   assert.equal((await tmux.list())[0].attached, 0);
 });
 test('WebSocket requires Origin, JWT, same identity and one-use ticket; real tmux input, resize, detach', { timeout: 15000 }, async () => {
@@ -143,7 +150,7 @@ test('signed with another key is rejected; no Origin cannot open WebSocket', asy
   const other = await generateKeyPair('RS256');
   const forged = await new SignJWT({ email: config.emails[0] }).setProtectedHeader({ alg: 'RS256', kid: 'test' })
     .setIssuer(config.issuer).setAudience(config.audience).setSubject('owner').setIssuedAt().setExpirationTime('5m').sign(other.privateKey);
-  assert.equal((await request('/', { assertion: forged })).status, 403);
+  assert.equal((await request('/terminal', { assertion: forged })).status, 403);
   const assertion = await token(); const ref = (await tmux.list())[0];
   assert.equal(await deniedWS(wsConnect(assertion, await reservation(assertion, ref), '')), 403);
 });

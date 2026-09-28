@@ -58,7 +58,7 @@ async function api(path, payload) {
 async function refresh() {
   $('refresh').disabled = true;
   try {
-    const { sessions } = await api('/manage/api/sessions');
+    const { sessions } = await api('/terminal/manage/api/sessions');
     $('sessions').replaceChildren();
     for (const session of sessions) {
       const button = document.createElement('button'); button.className = 'session';
@@ -86,12 +86,12 @@ async function connect(session) {
   $('session-name').textContent = session.name;
   updateState('连接中…'); notify();
   try {
-    const { ticket } = await api('/manage/api/connections', { id: session.id, generation: session.generation });
+    const { ticket } = await api('/terminal/manage/api/connections', { id: session.id, generation: session.generation });
     if (current !== revision) return;
     $('empty').hidden = true; $('terminal').hidden = false;
     if (!opened) { term.open($('terminal')); opened = true; }
     term.reset();
-    const url = new URL('/manage/ws', location.href); url.protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const url = new URL('/terminal/manage/ws', location.href); url.protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
     const ws = new WebSocket(url, ['nas-terminal.v1', `ticket.${ticket}`]); socket = ws;
     ws.onopen = () => { if (current !== revision) return; connecting = false; updateState('已连接', true); resize(); term.focus(); refresh(); };
     ws.onmessage = event => {

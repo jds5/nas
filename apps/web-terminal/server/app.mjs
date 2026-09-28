@@ -8,9 +8,10 @@ import { Tmux } from './tmux.mjs';
 
 const staticRoot = fileURLToPath(new URL('../public/', import.meta.url));
 const files = new Map([
-  ['/', ['index.html', 'text/html; charset=utf-8']],
-  ['/assets/app.js', ['assets/app.js', 'text/javascript; charset=utf-8']],
-  ['/assets/app.css', ['assets/app.css', 'text/css; charset=utf-8']],
+  ['/terminal/', ['index.html', 'text/html; charset=utf-8']],
+  ['/terminal', ['index.html', 'text/html; charset=utf-8']],
+  ['/terminal/assets/app.js', ['assets/app.js', 'text/javascript; charset=utf-8']],
+  ['/terminal/assets/app.css', ['assets/app.css', 'text/css; charset=utf-8']],
 ]);
 const headers = {
   'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff',
@@ -58,13 +59,13 @@ export function createApp({ config, keyResolver, tmux = new Tmux(), maxDurationM
           res.writeHead(200, { ...headers, 'Content-Type': mime });
           return res.end(req.method === 'HEAD' ? undefined : data);
         }
-        if (req.url === '/manage/api/sessions') {
+        if (req.url === '/terminal/manage/api/sessions') {
           const sessions = await tmux.list();
           return reply(res, 200, req.method === 'HEAD' ? undefined : { sessions });
         }
         return reply(res, 404, { error: '页面不存在' });
       }
-      if (req.method !== 'POST' || req.url !== '/manage/api/connections' || !originOK(req) ||
+      if (req.method !== 'POST' || req.url !== '/terminal/manage/api/connections' || !originOK(req) ||
           req.headers['x-nas-csrf-origin'] !== config.origin) return reply(res, 403, { error: '请求被拒绝' });
       const ref = await body(req);
       if (!await tmux.exists(ref)) return reply(res, 409, { error: '会话已变化，请刷新列表' });
@@ -88,7 +89,7 @@ export function createApp({ config, keyResolver, tmux = new Tmux(), maxDurationM
     if (pendingUpgrades >= 16) return reject(socket);
     pendingUpgrades++;
     try {
-      if (req.url !== '/manage/ws' || req.method !== 'GET' || !originOK(req)) return reject(socket);
+      if (req.url !== '/terminal/manage/ws' || req.method !== 'GET' || !originOK(req)) return reject(socket);
       const user = await authenticate(req);
       if (!user || peers.size >= 8 || userCount(user.sub) >= 4) return reject(socket);
       const protocols = (req.headers['sec-websocket-protocol'] || '').split(',').map(x => x.trim());
