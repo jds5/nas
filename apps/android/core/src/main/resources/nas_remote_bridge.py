@@ -135,6 +135,41 @@ def clean(text):
     return ''.join(c for c in text if c in '\n\t' or (ord(c) >= 32 and not 127 <= ord(c) <= 159 and c not in '\u202a\u202b\u202c\u202d\u202e\u2066\u2067\u2068\u2069'))
 
 
+def transport_envelope(text):
+    """Parse only a complete app question-reply frame, never ordinary prose."""
+    marker = '<send_user_message_question_reply>'
+    ending = '</send_user_message_question_reply>'
+    body = text.strip()
+    if not body.startswith(marker) or not body.endswith(ending):
+        return None
+    try:
+        replies = json.loads(body[len(marker):-len(ending)])
+    except (ValueError, TypeError):
+        return None
+    if not (isinstance(replies, list) and bool(replies) and all(
+        isinstance(reply, dict) and isinstance(reply.get('answer'), str)
+        and isinstance(reply.get('questionItemId'), str) for reply in replies)):
+        return None
+    return replies
+
+
+def readable_question_replies(replies):
+    result = []
+    for reply in replies:
+        answer = reply['answer']
+        for _ in range(3):
+            nested = transport_envelope(answer)
+            if not nested or len(nested) != 1:
+                break
+            answer = nested[0]['answer']
+        question = reply.get('question')
+        if isinstance(question, str) and question.strip() and not transport_envelope(question):
+            result.append('回答「' + question.strip()[:300] + '」：' + answer)
+        else:
+            result.append('回答问题：' + answer)
+    return '\n'.join(result)
+
+
 def public_messages(stream, before=None, after=None, details=False):
     end = os.fstat(stream.fileno()).st_size
     if before is not None:
@@ -198,6 +233,11 @@ def public_messages(stream, before=None, after=None, details=False):
             text = '\n'.join(c['text'] for c in item['content'] if isinstance(c, dict) and c.get('type') in ('text', 'Text', 'input_text', 'output_text') and isinstance(c.get('text'), str))
             if not text.strip():
                 continue
+            replies = transport_envelope(text)
+            if replies:
+                if role != 'user':
+                    continue
+                text = readable_question_replies(replies)
             clipped = len(text) > MAX_TEXT
             text = clean(text[:MAX_TEXT]) + ('\n[消息过长，余下内容请在终端查看]' if clipped else '')
             mid = item.get('id')
@@ -293,6 +333,109 @@ def composer(pane, require_empty, text=""):
         placeholders = ('Ask Codex to do anything', 'Find and fix a bug in @filename', 'Explain this codebase', 'Summarize recent commits', 'Implement {feature}', 'Write tests for @filename', 'Improve documentation in @filename', 'Use /skills to list available skills')
         if x != 2 or (content and content not in placeholders):
             raise Refused('电脑端输入框已有内容或状态无法确认，请在控制面板核对；未覆盖原输入')
+
+
+def startup_identity(pane, *, allow_rollout=False):
+    """Bind a not-yet-recorded Codex to its exact live process, not its directory."""
+    todo, visited, codex = [pane['pid']], set(), []
+    while todo and len(visited) < 128:
+        pid = todo.pop()
+        if pid in visited:
+            continue
+        visited.add(pid)
+        try:
+            _, start, comm = process_info(pid)
+            proc = Path('/proc') / str(pid)
+            if comm == 'codex':
+                opened = []
+                for fd in (proc / 'fd').iterdir():
+                    try:
+                        if re.fullmatch(r'rollout-[A-Za-z0-9T:._-]+\.jsonl', Path(os.readlink(fd)).name):
+                            opened.append(fd)
+                    except OSError:
+                        continue
+                codex.append((pid, start, bool(opened)))
+                continue
+            todo.extend(int(c) for c in (proc / 'task' / str(pid) / 'children').read_text().split())
+        except (OSError, ValueError, IndexError):
+            continue
+    if len(codex) != 1:
+        raise Refused('无法唯一确认新启动的 Codex 进程')
+    pid, start, has_rollout = codex[0]
+    if has_rollout and not allow_rollout:
+        raise Refused('Codex 会话记录已出现，请稍候进入聊天')
+    identity = f"{pane['id']}:{pane['pid']}:{pane['serverPid']}:{pid}:{start}"
+    return 'startup:' + hashlib.sha256(identity.encode()).hexdigest()
+
+
+def startup_handle(request, pane):
+    action = request.get('action')
+    token = startup_identity(pane)
+    if action == 'startup_snapshot':
+        screen = clean(run('tmux', 'capture-pane', '-p', '-t', pane['id']))[-14000:]
+        try:
+            composer(pane, True)
+            ready = True
+        except (Refused, ValueError):
+            ready = False
+        return {'ok': True, 'startupToken': token, 'screen': screen,
+                'screenToken': screen_token(screen), 'inputReady': ready}
+    if request.get('startupToken') != token:
+        raise Refused('启动中的 Codex 进程已变化，请重新打开窗格')
+    screen = clean(run('tmux', 'capture-pane', '-p', '-t', pane['id']))[-14000:]
+    if request.get('screenToken') != screen_token(screen):
+        raise Refused('Codex 启动画面已变化，请查看新画面')
+    if action == 'startup_key':
+        key = request.get('key')
+        if key not in ('Up', 'Down', 'Left', 'Right', 'Enter', 'Escape', 'Tab', 'BTab', 'Space'):
+            raise Refused('启动菜单按键不受支持')
+        try:
+            composer(pane, True)
+        except Refused:
+            pass
+        else:
+            raise Refused('已进入输入框，请直接发送消息')
+        target(request)
+        if startup_identity(pane) != token:
+            raise Refused('Codex 进程已变化，未发送按键')
+        run('tmux', 'send-keys', '-t', pane['id'], key)
+        return {'ok': True}
+    if action != 'startup_send':
+        raise Refused('启动操作不受支持')
+    text = request.get('text')
+    if not isinstance(text, str) or not text.strip() or len(text.encode()) > 16384:
+        raise Refused('首条消息需为 1–16384 字节')
+    if any((ord(c) < 32 and c not in '\n\t') or 127 <= ord(c) <= 159 for c in text):
+        raise Refused('输入包含终端控制字符')
+    if text.startswith(('/', '!')) and '\n' in text:
+        raise Refused('命令请单行输入')
+    composer(pane, True)
+    buffer = 'nasremote-' + uuid.uuid4().hex
+    touched = False
+    try:
+        run('tmux', 'load-buffer', '-b', buffer, '-', data=text.encode())
+        target(request)
+        if startup_identity(pane, allow_rollout=True) != token:
+            raise Refused('Codex 进程已变化，未发送')
+        composer(pane, True)
+        touched = True
+        run('tmux', 'paste-buffer', '-p', '-d', '-b', buffer, '-t', pane['id'])
+        time.sleep(0.2)
+        target(request)
+        if startup_identity(pane, allow_rollout=True) != token:
+            raise Refused('Codex 进程已变化')
+        composer(pane, False, text)
+        run('tmux', 'send-keys', '-t', pane['id'], 'Enter')
+        return {'ok': True, 'submitted': True}
+    except Exception:
+        if touched:
+            return {'ok': False, 'uncertain': True, 'error': '首条输入可能已发送，请查看当前窗格；不会自动重试'}
+        raise
+    finally:
+        try:
+            run('tmux', 'delete-buffer', '-b', buffer)
+        except Exception:
+            pass
 
 
 def deliver(request, pane, binding):
@@ -642,6 +785,8 @@ def attachment_message(request, binding):
 
 def handle(request, source=None):
     pane = target(request)
+    if request.get('action') in ('startup_snapshot', 'startup_key', 'startup_send'):
+        return startup_handle(request, pane)
     binding, stream, meta = locate(pane)
     try:
         expected = request.get('binding')
@@ -655,6 +800,11 @@ def handle(request, source=None):
                 screen = clean(run('tmux', 'capture-pane', '-p', '-t', pane['id']))[-14000:]
                 reply['screen'] = screen
                 reply['screenToken'] = screen_token(screen)
+                try:
+                    composer(pane, True)
+                    reply['inputReady'] = True
+                except (Refused, ValueError):
+                    reply['inputReady'] = False
                 reply['question'] = native_question(screen)
                 footer = '\n'.join(screen.rstrip().splitlines()[-12:])
                 reply['questionClosed'] = bool(QUESTION_OPEN.search(footer))

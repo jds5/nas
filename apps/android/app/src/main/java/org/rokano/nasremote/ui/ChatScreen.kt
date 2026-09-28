@@ -46,7 +46,9 @@ fun ChatScreen(state: RemoteState, model: RemoteViewModel, attachmentActions: At
     var skip by remember { mutableStateOf(false) }
     var confirmationToken by remember { mutableStateOf<String?>(null) }
     val writable = state.connected && !state.busy && !state.uncertain && !state.reconnecting && !state.preparingAttachment
-    val canSend = writable && state.binding != null && state.chatError == null && (state.draft.isNotBlank() || state.attachments.isNotEmpty())
+    val canType = state.binding != null || state.startupToken != null
+    val canSend = writable && canType && state.inputReady && !state.startupPending && state.chatError == null &&
+        (state.draft.isNotBlank() || (state.binding != null && state.attachments.isNotEmpty()))
     val nearBottom by remember { derivedStateOf { !list.canScrollForward } }
     var restored by remember { mutableStateOf(false) }
     var following by remember { mutableStateOf(true) }
@@ -86,6 +88,9 @@ fun ChatScreen(state: RemoteState, model: RemoteViewModel, attachmentActions: At
                     state.reconnecting -> "正在接回原会话…"
                     state.chatError != null -> "会话读取需要处理"
                     state.catchingUp -> "正在补读断线期间的消息…"
+                    state.startupPending -> "首条消息已提交，正在建立会话…"
+                    state.startupToken != null && state.inputReady -> "Codex 已就绪，可以发送首条消息"
+                    state.startupToken != null -> "Codex 正在初始化，请处理下方提示"
                     state.binding == null -> "正在关联原会话…"
                     state.activity == "working" -> "Codex 正在处理"
                     state.activity == "idle" -> "本轮已结束"
@@ -100,6 +105,29 @@ fun ChatScreen(state: RemoteState, model: RemoteViewModel, attachmentActions: At
                 Column(Modifier.padding(16.dp)) {
                     Text(it, style = MaterialTheme.typography.bodyMedium)
                     TextButton(onClick = { model.terminal(true) }) { Text("使用终端模式") }
+                }
+            }
+        }
+        if (canType && state.messages.isEmpty() && !state.inputReady && state.chatError == null) Surface(
+            color = MaterialTheme.colorScheme.secondaryContainer, shape = RoundedCornerShape(16.dp),
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
+            Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text("Codex 启动选项", style = MaterialTheme.typography.titleSmall)
+                Text("查看当前提示后手动选择；更新与信任目录由你决定。", style = MaterialTheme.typography.bodySmall)
+                SelectionContainer {
+                    Text(state.output.joinToString("\n").ifBlank { "正在读取启动画面…" },
+                        fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.bodySmall,
+                        softWrap = false, modifier = Modifier.fillMaxWidth().heightIn(max = 260.dp)
+                            .verticalScroll(rememberScrollState()).horizontalScroll(rememberScrollState()))
+                }
+                val menuWritable = writable && state.screenToken != null
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
+                    TextButton(onClick = { model.key(RemoteKey.Up) }, enabled = menuWritable) { Text("↑") }
+                    TextButton(onClick = { model.key(RemoteKey.Down) }, enabled = menuWritable) { Text("↓") }
+                    TextButton(onClick = { model.key(RemoteKey.Left) }, enabled = menuWritable) { Text("←") }
+                    TextButton(onClick = { model.key(RemoteKey.Right) }, enabled = menuWritable) { Text("→") }
+                    Button(onClick = { model.key(RemoteKey.Enter) }, enabled = menuWritable) { Text("确认 ↵") }
+                    TextButton(onClick = { model.key(RemoteKey.Escape) }, enabled = menuWritable) { Text("Esc") }
                 }
             }
         }
@@ -120,6 +148,8 @@ fun ChatScreen(state: RemoteState, model: RemoteViewModel, attachmentActions: At
                     Text(if (state.messages.size >= 300) "已显示 300 条，更多内容请用终端查看" else if (state.loadingHistory) "正在读取…" else "查看更早的消息")
                 }
                 if (state.messages.isEmpty() && state.binding != null) Text("暂未读到公开消息，可继续向 Codex 提问。", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                if (state.messages.isEmpty() && state.startupToken != null && state.inputReady && !state.startupPending)
+                    Text("输入首条消息即可开始新对话。", color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             items(state.messages, key = { it.id }) { message ->
                 Column {
@@ -161,7 +191,7 @@ fun ChatScreen(state: RemoteState, model: RemoteViewModel, attachmentActions: At
                     }
                 }
                 Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedTextField(state.draft, model::draft, enabled = !state.busy && state.binding != null, modifier = Modifier.weight(1f), shape = RoundedCornerShape(24.dp),
+                    OutlinedTextField(state.draft, model::draft, enabled = !state.busy && canType && !state.startupPending, modifier = Modifier.weight(1f), shape = RoundedCornerShape(24.dp),
                         placeholder = { Text("向 Codex 发送消息…") }, minLines = 1, maxLines = 6)
                     Button(onClick = {
                         if (state.draft.trim() == "/skills") { skillsOpen = true; model.draft("") }

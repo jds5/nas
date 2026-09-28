@@ -47,6 +47,9 @@ data class RemoteState(
     val terminal: Boolean = false,
     val panel: Boolean = false,
     val binding: String? = null,
+    val startupToken: String? = null,
+    val inputReady: Boolean = false,
+    val startupPending: Boolean = false,
     val messages: List<ChatItem> = emptyList(),
     val skills: List<SkillOption> = emptyList(),
     val chatError: String? = null,
@@ -418,7 +421,7 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
                             mutable.update { it.copy(lifecycleBusy = false, lifecycleOpen = false,
                                 lifecycleOperation = null, lifecycleMachineStatus = "", panes = panes) }
                             persist()
-                            select(pane, terminal = true)
+                            select(pane)
                             return@launch
                         }
                         if (attempt >= 3 && pane?.command == "bash") {
@@ -450,7 +453,7 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
         selection++
         loadingMemo = restored
         val prior = restored ?: memos.values.lastOrNull { it.profile == profileId() && it.pane == pane.identity }
-        mutable.update { it.copy(selected = pane, output = emptyList(), message = null, draft = drafts[pane.identity].orEmpty(), terminal = terminal || !pane.canWrite, panel = false, binding = null, messages = emptyList(), skills = emptyList(), chatError = null, historyBefore = null, activity = "unknown", loadingHistory = false, delivery = "", answerDraft = "", screenToken = null, questionHint = false, questionClosed = false, question = null, questionsOpen = false, questionChoice = null, answerQuestion = "", answered = "", restoreAnchor = "", restoreOffset = 0, seen = "", catchingUp = false, uncertain = (prior?.uncertain ?: false) || recoveryLost) }
+        mutable.update { it.copy(selected = pane, output = emptyList(), message = null, draft = drafts[pane.identity].orEmpty(), terminal = terminal || !pane.canWrite, panel = false, binding = null, startupToken = null, inputReady = false, startupPending = false, messages = emptyList(), skills = emptyList(), chatError = null, historyBefore = null, activity = "unknown", loadingHistory = false, delivery = "", answerDraft = "", screenToken = null, questionHint = false, questionClosed = false, question = null, questionsOpen = false, questionChoice = null, answerQuestion = "", answered = "", restoreAnchor = "", restoreOffset = 0, seen = "", catchingUp = false, uncertain = (prior?.uncertain ?: false) || recoveryLost) }
         startPolling()
     }
     fun back() {
@@ -577,11 +580,28 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
     fun send() {
         val s = state.value
         val pane = s.selected ?: return
-        val binding = s.binding ?: return
+        val binding = s.binding
         val text = s.draft.ifBlank { if (s.attachments.isNotEmpty()) "请查看这些附件。" else "" }
         try { TmuxProtocol.validatePaste(text) }
         catch (e: IllegalArgumentException) { mutable.update { it.copy(message = e.message) }; return }
-        if (s.chatError != null) return
+        if (s.chatError != null || !s.inputReady || s.startupPending) return
+        if (binding == null) {
+            val startupToken = s.startupToken ?: return
+            val screenToken = s.screenToken ?: return
+            if (s.attachments.isNotEmpty()) {
+                mutable.update { it.copy(message = "首条消息暂不支持附件，请建立会话后再上传。") }; return
+            }
+            write(clearDraft = true, rejectionPanel = false) { remote, _ ->
+                val result = JSONObject(remote.bridge(request(pane, "startup_send")
+                    .put("startupToken", startupToken).put("screenToken", screenToken).put("text", text).toString()))
+                if (!result.optBoolean("ok")) {
+                    val reason = result.optString("error", "首条消息未完成")
+                    if (result.optBoolean("uncertain")) error(reason) else throw InputRejected(reason)
+                }
+                mutable.update { it.copy(startupPending = true) }
+            }
+            return
+        }
         if (s.question != null) {
             mutable.update { it.copy(questionsOpen = true, message = "请提交当前回答，或点“稍后回答”返回聊天。") }
             return
@@ -662,6 +682,15 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
     }
     fun key(key: RemoteKey, screenToken: String? = state.value.screenToken) {
         if (!state.value.terminal && state.value.binding != null) control("key", key, screenToken = screenToken)
+        else if (!state.value.terminal && state.value.startupToken != null) {
+            val startupToken = state.value.startupToken ?: return
+            val token = screenToken ?: return
+            write(successMessage = null, rejectionPanel = false) { remote, pane ->
+                val result = JSONObject(remote.bridge(request(pane, "startup_key")
+                    .put("startupToken", startupToken).put("screenToken", token).put("key", key.tmuxName).toString()))
+                if (!result.optBoolean("ok")) throw InputRejected(result.optString("error", "启动菜单操作未完成"))
+            }
+        }
         else write { remote, pane -> remote.key(pane, key) }
     }
     private fun write(clearDraft: Boolean = false, clearAnswer: Boolean = false, successMessage: String? = "已发送终端操作，请核对原界面。", rejectionPanel: Boolean = true, closeQuestions: Boolean = false, action: (SshTmuxClient, Pane) -> Unit) {
@@ -726,12 +755,16 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
                                 .put("screen", true).put("includeSkills", snapshot.binding == null)
                                 .apply { if (cursor != null) put("after", cursor) }.toString()))
                         }
-                        Triple(panes, lines, chat)
+                        val startup = pane?.takeIf { !snapshot.terminal && it.canWrite && snapshot.binding == null && chat?.optBoolean("ok") == false }?.let {
+                            JSONObject(remote.bridge(request(it, "startup_snapshot").toString()))
+                        }
+                        Triple(panes, lines, chat to startup)
                     } }
                     if (token != epoch) break
                     if (selectedToken != selection) continue
-                    val chat = result.third
+                    val (chat, startup) = result.third
                     val valid = chat?.optBoolean("ok") == true
+                    val starting = !valid && startup?.optBoolean("ok") == true
                     val binding = if (valid) chat.getString("binding") else null
                     val initial = snapshot.binding == null && binding != null
                     val memo = if (initial) memos[memoKey(binding)] else null
@@ -756,11 +789,14 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
                             val skillArray = chat?.optJSONArray("skills")
                             val base = if (initial && cursor != null) cached[memoKey(binding)].orEmpty() else it.messages
                             it.copy(panes = result.first ?: it.panes,
-                                output = if (valid) TerminalText.clean(chat.optString("screen")).lines() else result.second ?: it.output,
+                                output = if (valid) TerminalText.clean(chat.optString("screen")).lines() else if (starting) TerminalText.clean(startup.optString("screen")).lines() else result.second ?: it.output,
                                 messages = if (valid) mergeChat(base, chat) else it.messages,
                                 binding = binding ?: it.binding,
-                                chatError = if (chat != null && !valid) chat.optString("error") else null,
-                                screenToken = if (valid && !it.busy && operation == interaction) chat.optString("screenToken") else null,
+                                startupToken = if (starting) startup.optString("startupToken") else null,
+                                startupPending = if (valid) false else it.startupPending,
+                                inputReady = if (valid) chat.optBoolean("inputReady") else starting && startup.optBoolean("inputReady"),
+                                chatError = if (chat != null && !valid && !starting) chat.optString("error") else null,
+                                screenToken = if (!it.busy && operation == interaction) (if (valid) chat.optString("screenToken") else if (starting) startup.optString("screenToken") else null) else null,
                                 questionHint = valid && chat.optBoolean("questionHint"),
                                 question = question,
                                 questionClosed = valid && chat.optBoolean("questionClosed"),

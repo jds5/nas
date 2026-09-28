@@ -40,6 +40,64 @@ class BridgeTests(unittest.TestCase):
         self.assertNotIn('PRIVATE', str(messages))
         self.assertIn('uid=1000', messages[-1]['text'])
 
+    def test_question_reply_transport_frame_is_readable(self):
+        frame = '<send_user_message_question_reply>\n' + json.dumps([{
+            'answer': '启动并加 --yolo（推荐）', 'question': '启动吗？',
+            'questionItemId': '["request_user_input_async","call_one",0]'}], ensure_ascii=False) + '\n</send_user_message_question_reply>'
+        messages, _, _ = self.read(encoded([record('UserMessage', 'u1', frame),
+            record('AgentMessage', 'a1', frame, phase='final_answer'),
+            record('UserMessage', 'u2', '请解释这段 <send_user_message_question_reply> 文本'),
+            record('AgentMessage', 'a2', '正常回复', phase='final_answer')]))
+        self.assertEqual([m['id'] for m in messages], ['u1', 'u2', 'a2'])
+        self.assertEqual(messages[0]['text'], '回答「启动吗？」：启动并加 --yolo（推荐）')
+        self.assertNotIn('questionItemId', str(messages))
+        nested = '<send_user_message_question_reply>\n' + json.dumps([{
+            'answer': frame, 'question': '收到？', 'questionItemId': 'id'}], ensure_ascii=False) + '\n</send_user_message_question_reply>'
+        self.assertEqual(self.read(encoded([record('UserMessage', 'nested', nested)]))[0][0]['text'],
+                         '回答「收到？」：启动并加 --yolo（推荐）')
+
+    def test_startup_menu_requires_live_identity_and_current_screen(self):
+        pane = {'id': '%1', 'pid': 1, 'serverPid': 2}
+        screen = 'Trust this directory?\n› Yes\n  No'
+        request = {'action': 'startup_key', 'startupToken': 'startup:same',
+                   'screenToken': b.screen_token(screen), 'key': 'Down'}
+        calls = []
+        with patch.object(b, 'startup_identity', return_value='startup:same'), \
+             patch.object(b, 'target', return_value=pane), \
+             patch.object(b, 'composer', side_effect=b.Refused('menu')), \
+             patch.object(b, 'run', side_effect=lambda *a, **k: calls.append(a) or screen):
+            self.assertTrue(b.startup_handle(request, pane)['ok'])
+            self.assertEqual(sum(a[1] == 'send-keys' for a in calls), 1)
+            with self.assertRaises(b.Refused):
+                b.startup_handle(dict(request, screenToken='stale'), pane)
+            with self.assertRaises(b.Refused):
+                b.startup_handle(dict(request, key='C-c'), pane)
+        self.assertEqual(sum(a[1] == 'send-keys' for a in calls), 1)
+
+    def test_startup_first_send_enters_once_only_after_verified_paste(self):
+        pane = {'id': '%1', 'pid': 1, 'serverPid': 2}
+        screen = '› Ask Codex to do anything'
+        request = {'action': 'startup_send', 'startupToken': 'startup:same',
+                   'screenToken': b.screen_token(screen), 'text': '中文 $(true)'}
+        calls = []
+        def run(*args, **kwargs):
+            calls.append((args, kwargs))
+            return screen if args[1] == 'capture-pane' else ''
+        with patch.object(b, 'startup_identity', return_value='startup:same'), \
+             patch.object(b, 'target', return_value=pane), \
+             patch.object(b, 'composer'), patch.object(b, 'run', side_effect=run), \
+             patch.object(b.time, 'sleep'):
+            self.assertTrue(b.startup_handle(request, pane)['submitted'])
+        self.assertEqual(sum(a[1] == 'send-keys' and a[-1] == 'Enter' for a, _ in calls), 1)
+        self.assertEqual([k['data'] for _, k in calls if 'data' in k], [request['text'].encode()])
+        calls.clear()
+        with patch.object(b, 'startup_identity', return_value='startup:same'), \
+             patch.object(b, 'target', return_value=pane), \
+             patch.object(b, 'composer', side_effect=[None, None, b.Refused('changed')]), \
+             patch.object(b, 'run', side_effect=run), patch.object(b.time, 'sleep'):
+            self.assertTrue(b.startup_handle(request, pane)['uncertain'])
+        self.assertFalse(any(a[1] == 'send-keys' for a, _ in calls))
+
     def test_duplicate_text_retains_distinct_ids(self):
         messages, _, _ = self.read(encoded([record('AgentMessage', '1'), record('AgentMessage', '2')]))
         self.assertEqual(len(messages), 2)
