@@ -795,7 +795,7 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
                                 startupToken = if (starting) startup.optString("startupToken") else null,
                                 startupPending = if (valid) false else it.startupPending,
                                 inputReady = if (valid) chat.optBoolean("inputReady") else starting && startup.optBoolean("inputReady"),
-                                chatError = if (chat != null && !valid && !starting) chat.optString("error") else null,
+                                chatError = if (chat != null && !valid && !starting) startup?.optString("error") ?: chat.optString("error") else null,
                                 screenToken = if (!it.busy && operation == interaction) (if (valid) chat.optString("screenToken") else if (starting) startup.optString("screenToken") else null) else null,
                                 questionHint = valid && chat.optBoolean("questionHint"),
                                 question = question,

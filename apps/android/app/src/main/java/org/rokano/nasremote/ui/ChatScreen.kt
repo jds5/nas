@@ -88,8 +88,8 @@ fun ChatScreen(state: RemoteState, model: RemoteViewModel, attachmentActions: At
                     state.reconnecting -> "正在接回原会话…"
                     state.chatError != null -> "会话读取需要处理"
                     state.catchingUp -> "正在补读断线期间的消息…"
-                    state.startupPending -> "首条消息已提交，正在建立会话…"
-                    state.startupToken != null && state.inputReady -> "Codex 已就绪，可以发送首条消息"
+                    state.startupPending -> "消息已提交，正在关联会话记录…"
+                    state.startupToken != null && state.inputReady -> "Codex 输入已就绪"
                     state.startupToken != null -> "Codex 正在初始化，请处理下方提示"
                     state.binding == null -> "正在关联原会话…"
                     state.activity == "working" -> "Codex 正在处理"
@@ -149,7 +149,7 @@ fun ChatScreen(state: RemoteState, model: RemoteViewModel, attachmentActions: At
                 }
                 if (state.messages.isEmpty() && state.binding != null) Text("暂未读到公开消息，可继续向 Codex 提问。", color = MaterialTheme.colorScheme.onSurfaceVariant)
                 if (state.messages.isEmpty() && state.startupToken != null && state.inputReady && !state.startupPending)
-                    Text("输入首条消息即可开始新对话。", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text("尚未读到会话记录，可向当前 Codex 发送消息。", color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             items(state.messages, key = { it.id }) { message ->
                 Column {

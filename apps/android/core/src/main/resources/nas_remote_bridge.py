@@ -1,5 +1,6 @@
 """Versioned, stateless SSH adapter. JSON stdin; no listener, eval, or user shell interpolation."""
 import fcntl
+import base64
 import itertools
 import hashlib
 import json
@@ -8,6 +9,8 @@ import re
 import stat
 import subprocess
 import selectors
+import socket
+import struct
 import sys
 import time
 import uuid
@@ -76,9 +79,202 @@ def process_info(pid):
     return int(fields[1]), fields[19], (p / 'comm').read_text().strip()
 
 
+def socket_inodes(pid):
+    result = set()
+    for fd in (Path('/proc') / str(pid) / 'fd').iterdir():
+        try:
+            link = os.readlink(fd)
+            if re.fullmatch(r'socket:\[\d+\]', link):
+                result.add(link[8:-1])
+        except OSError:
+            continue
+    return result
+
+
+def tui_origins(pid):
+    """Match the TUI's own loopback listeners, never its working directory/title."""
+    owned = socket_inodes(pid)
+    origins = set()
+    for row in (Path('/proc') / str(pid) / 'net/tcp').read_text().splitlines()[1:]:
+        fields = row.split()
+        if len(fields) > 9 and fields[3] == '0A' and fields[9] in owned:
+            address, port = fields[1].split(':')
+            if address == '0100007F':
+                origins.add('http://127.0.0.1:' + str(int(port, 16)))
+    return origins
+
+
+class DaemonReader:
+    """Bounded read-only JSON-RPC over the existing daemon's local WebSocket."""
+    def __init__(self, path, pid):
+        self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        self.deadline = time.monotonic() + 6
+        self.serial = 0
+        try:
+            self.sock.settimeout(2)
+            self.sock.connect(path)
+            peer, uid, _ = struct.unpack('3i', self.sock.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, 12))
+            if peer != pid or uid != os.getuid():
+                raise Refused('Codex 后台服务身份已变化')
+            key = base64.b64encode(os.urandom(16)).decode()
+            self.sock.sendall(('GET / HTTP/1.1\r\nHost: localhost\r\nUpgrade: websocket\r\n'
+                'Connection: Upgrade\r\nSec-WebSocket-Key: ' + key + '\r\nSec-WebSocket-Version: 13\r\n\r\n').encode())
+            header = bytearray()
+            while not header.endswith(b'\r\n\r\n') and len(header) < 8192:
+                header.extend(self.read(1))
+            accept = base64.b64encode(hashlib.sha1((key + '258EAFA5-E914-47DA-95CA-C5AB0DC85B11').encode()).digest()).decode()
+            lines = bytes(header).decode('ascii').split('\r\n')
+            headers = {name.lower(): value.strip() for name, value in (line.split(':', 1) for line in lines[1:] if ':' in line)}
+            if not lines[0].startswith('HTTP/1.1 101 ') or headers.get('sec-websocket-accept') != accept:
+                raise Refused('Codex 后台服务握手失败')
+            self.rpc('initialize', {'clientInfo': {'name': 'nas_remote_reader', 'version': '0.5.3'},
+                                  'capabilities': {'experimentalApi': True}})
+            self.send({'method': 'initialized'})
+        except Exception:
+            self.sock.close()
+            raise
+
+    def close(self):
+        self.sock.close()
+
+    def read(self, size):
+        result = bytearray()
+        while len(result) < size:
+            left = self.deadline - time.monotonic()
+            if left <= 0:
+                raise Refused('读取 Codex 后台会话超时')
+            self.sock.settimeout(min(2, left))
+            chunk = self.sock.recv(size - len(result))
+            if not chunk:
+                raise Refused('Codex 后台连接已关闭')
+            result.extend(chunk)
+        return bytes(result)
+
+    def send(self, message, opcode=1):
+        data = json.dumps(message).encode() if opcode == 1 else message
+        mask = os.urandom(4)
+        length = len(data)
+        prefix = bytes([0x80 | opcode, 0x80 | length]) if length < 126 else bytes([0x80 | opcode, 254]) + struct.pack('!H', length)
+        self.sock.sendall(prefix + mask + bytes(value ^ mask[i % 4] for i, value in enumerate(data)))
+
+    def rpc(self, method, params):
+        if method not in ('initialize', 'thread/loaded/list', 'mcpServerStatus/list', 'thread/read'):
+            raise Refused('后台接口只允许读取会话')
+        self.serial += 1
+        self.send({'id': self.serial, 'method': method, 'params': params})
+        data = bytearray()
+        for _ in range(128):
+            flags, length = self.read(2)
+            if flags & 0x70 or length & 0x80:
+                raise Refused('后台 WebSocket 格式不受支持')
+            length &= 127
+            if length == 126:
+                length = struct.unpack('!H', self.read(2))[0]
+            elif length == 127:
+                length = struct.unpack('!Q', self.read(8))[0]
+            if length + len(data) > 4 * MAX_READ:
+                raise Refused('后台会话响应过大')
+            payload = self.read(length)
+            opcode = flags & 15
+            if opcode == 9:
+                if length > 125:
+                    raise Refused('后台心跳无效')
+                self.send(payload, 10)
+                continue
+            if opcode not in (0, 1):
+                raise Refused('后台会话连接已结束')
+            data.extend(payload)
+            if not flags & 128:
+                continue
+            response = json.loads(data)
+            data.clear()
+            if response.get('id') == self.serial:
+                if 'error' in response:
+                    raise Refused('Codex 后台会话读取失败，请稍后重试')
+                return response['result']
+        raise Refused('后台会话响应超出限制')
+
+
+def read_tui_thread(reader, origins):
+    threads = reader.rpc('thread/loaded/list', {'limit': 64})
+    if threads.get('nextCursor') or len(threads['data']) > 64:
+        raise Refused('运行中的会话过多，无法安全关联')
+    matches = []
+    for tid in threads['data']:
+        servers = reader.rpc('mcpServerStatus/list', {'threadId': tid, 'detail': 'toolsAndAuthOnly', 'limit': 100})
+        if servers.get('nextCursor'):
+            raise Refused('后台终端列表未完整读取')
+        if any(server.get('name') == 'codex_tui' and server.get('httpOrigin') in origins
+               and server.get('runtimeStatus') == 'connected' for server in servers['data']):
+            matches.append(tid)
+    if len(matches) != 1:
+        raise Refused('后台会话与当前终端尚未唯一关联，请稍候；不会当作新对话发送')
+    thread = reader.rpc('thread/read', {'threadId': matches[0], 'includeTurns': False})['thread']
+    if thread.get('id') != matches[0]:
+        raise Refused('Codex 后台返回的会话身份不一致')
+    return thread
+
+
+def unrecorded_thread(thread, home, process_started):
+    path = thread.get('path')
+    if not path or thread.get('ephemeral'):
+        return False
+    path = Path(path)
+    if path.is_symlink() or not path.resolve().is_relative_to((home / 'sessions').resolve()):
+        raise Refused('后台会话记录路径无效')
+    # 0.158 allocates a path before materializing the first turn. Only a newly
+    # created, empty, idle thread may bootstrap; missing old history is an error.
+    return (not path.exists() and thread.get('preview') == '' and
+            thread.get('status', {}).get('type') == 'idle' and
+            isinstance(thread.get('createdAt'), (int, float)) and
+            thread['createdAt'] >= process_started - 1)
+
+
+def daemon_thread(pid, start):
+    origins = tui_origins(pid)
+    if not origins:
+        return None
+    proc = Path('/proc') / str(pid)
+    if b'--no-daemon' in (proc / 'cmdline').read_bytes().split(b'\0'):
+        return None
+    environment = dict(v.split(b'=', 1) for v in (proc / 'environ').read_bytes().split(b'\0') if b'=' in v)
+    home = Path(os.fsdecode(environment.get(b'CODEX_HOME', os.fsencode(Path.home() / '.codex'))))
+    record = home / 'app-server-daemon/daemon.pid'
+    if not record.exists():
+        raise Refused('Codex 终端已有服务端连接，但后台身份不可读；不能当作新对话发送')
+    state = json.loads(record.read_text())
+    backend = state['pid']
+    _, backend_start, comm = process_info(backend)
+    identity = state.get('processIdentity', {})
+    if (comm != 'codex' or str(identity.get('startTicks')) != backend_start or
+            identity.get('bootId') != Path('/proc/sys/kernel/random/boot_id').read_text().strip()):
+        raise Refused('Codex 后台进程身份无法确认')
+    owned = socket_inodes(backend)
+    paths = set()
+    for row in Path('/proc/net/unix').read_text().splitlines()[1:]:
+        fields = row.split(maxsplit=7)
+        if len(fields) == 8 and fields[3] == '00010000' and fields[6] in owned:
+            paths.add(fields[7])
+    if len(paths) != 1:
+        raise Refused('无法唯一确认 Codex 后台接口')
+    reader = DaemonReader(paths.pop(), backend)
+    try:
+        thread = read_tui_thread(reader, origins)
+        if process_info(pid)[1] != start or tui_origins(pid) != origins or process_info(backend)[1] != backend_start:
+            raise Refused('Codex 终端或会话已变化')
+        thread['_backend'] = f'{backend}:{backend_start}'
+        thread['_home'] = home
+        boot_time = next(int(line.split()[1]) for line in Path('/proc/stat').read_text().splitlines() if line.startswith('btime '))
+        thread['_unrecorded'] = unrecorded_thread(thread, home, boot_time + int(start) / os.sysconf('SC_CLK_TCK'))
+        return thread
+    finally:
+        reader.close()
+
+
 def locate(pane):
     # Follow the pane process tree, not cwd or the most recently modified session.
     todo, visited, candidates = [pane['pid']], set(), {}
+    frontends = []
     while todo and len(visited) < 128:
         pid = todo.pop()
         if pid in visited:
@@ -89,6 +285,7 @@ def locate(pane):
             proc = Path('/proc') / str(pid)
             children = (proc / 'task' / str(pid) / 'children').read_text().split()
             if comm == 'codex':
+                frontends.append((pid, start))
                 for fd in (proc / 'fd').iterdir():
                     stream = None
                     try:
@@ -123,6 +320,31 @@ def locate(pane):
             todo.extend(int(c) for c in children)
         except (OSError, ValueError, IndexError):
             continue
+    if not candidates and len(frontends) == 1:
+        pid, start = frontends[0]
+        try:
+            thread = daemon_thread(pid, start)
+            if thread and thread.get('path') and not thread.get('_unrecorded'):
+                path = Path(thread['path'])
+                if path.is_symlink() or not path.resolve().is_relative_to((thread['_home'] / 'sessions').resolve()):
+                    raise Refused('后台会话记录路径无效')
+                descriptor = os.open(path, os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW)
+                stream = os.fdopen(descriptor, 'rb')
+                try:
+                    st = os.fstat(stream.fileno())
+                    if not stat.S_ISREG(st.st_mode) or st.st_uid != os.getuid():
+                        raise Refused('后台会话记录身份无效')
+                    meta = json.loads(stream.readline(65537))
+                    info = meta.get('payload', {})
+                    if meta.get('type') != 'session_meta' or info.get('id') != thread['id']:
+                        raise Refused('后台会话记录与终端不一致')
+                    binding = hashlib.sha256(f"{pid}:{start}:{thread['_backend']}:{st.st_dev}:{st.st_ino}:{info['id']}".encode()).hexdigest()
+                    return binding, stream, info
+                except Exception:
+                    stream.close()
+                    raise
+        except (OSError, ValueError, KeyError, TypeError):
+            raise Refused('新版 Codex 后台会话暂不可读，请稍后重试') from None
     if len(candidates) != 1:
         for stream, *_ in candidates.values():
             stream.close()
@@ -362,9 +584,18 @@ def startup_identity(pane, *, allow_rollout=False):
     if len(codex) != 1:
         raise Refused('无法唯一确认新启动的 Codex 进程')
     pid, start, has_rollout = codex[0]
+    thread = None
+    if not has_rollout:
+        try:
+            thread = daemon_thread(pid, start)
+        except (OSError, ValueError, KeyError, TypeError):
+            raise Refused('Codex 后台状态尚未确认，不能作为新对话发送') from None
+        has_rollout = bool(thread and not thread.get('_unrecorded'))
     if has_rollout and not allow_rollout:
         raise Refused('Codex 会话记录已出现，请稍候进入聊天')
     identity = f"{pane['id']}:{pane['pid']}:{pane['serverPid']}:{pid}:{start}"
+    if thread:
+        identity += f":{thread['_backend']}:{thread['id']}"
     return 'startup:' + hashlib.sha256(identity.encode()).hexdigest()
 
 
