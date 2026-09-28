@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="color-scheme" content="dark">
+  <title>NAS · 终端</title>
+  <link rel="stylesheet" href="/assets/app.css">
+  <script type="module" src="/assets/app.js"></script>
+</head>
+<body>
+  <header>
+    <a class="brand" href="/" aria-label="NAS 终端首页"><span class="brand-icon">&gt;_</span><span>NAS <span class="muted">/ 终端</span></span></a>
+    <span class="access-badge"><span class="dot"></span>Access 保护</span>
+  </header>
+  <main>
+    <aside id="sidebar">
+      <div class="section-heading"><h1>会话</h1><button id="refresh" class="quiet">刷新</button></div>
+      <p class="intro">接回正在运行的工作。</p>
+      <div id="sessions" aria-label="tmux 会话列表"></div>
+      <p id="list-status" class="muted" role="status">正在读取会话…</p>
+      <p class="aside-note">断开连接后，任务仍会继续运行。</p>
+    </aside>
+    <section class="workspace" aria-label="终端工作区">
+      <div class="terminal-heading">
+        <div><span id="connection-dot" class="dot idle"></span><strong id="session-name">选择一个会话</strong><span id="state">尚未连接</span></div>
+        <div class="actions"><button id="reconnect" hidden>重新连接</button><button id="detach" disabled>断开</button><button id="fullscreen" title="全屏终端" aria-label="全屏终端">⛶</button></div>
+      </div>
+      <div id="notice" role="status" hidden></div>
+      <div id="terminal-wrap"><div id="empty"><span class="empty-icon">&gt;_</span><h2>你的工作，一直都在。</h2><p>从会话列表选择，继续操作 NAS。<br>支持 Codex、命令行与启动确认界面。</p></div><div id="terminal" hidden></div></div>
+      <div class="keyboard-bar" aria-label="终端快捷键">
+        <button data-key="esc">Esc</button><button data-key="tab">Tab</button><button id="ctrl" aria-pressed="false">Ctrl</button>
+        <button data-key="up" aria-label="上方向键">↑</button><button data-key="down" aria-label="下方向键">↓</button><button data-key="left" aria-label="左方向键">←</button><button data-key="right" aria-label="右方向键">→</button>
+        <button data-key="enter">Enter</button><button id="keyboard">键盘</button>
+      </div>
+      <form id="composer" autocomplete="off"><label for="draft" class="sr-only">中文或长文本输入</label><textarea id="draft" rows="1" placeholder="中文或长文本，在这里输入后粘贴到终端" spellcheck="false"></textarea><button id="paste" type="button" disabled>粘贴</button><button id="send" type="submit" disabled>发送 ↵</button></form>
+      <footer><span id="hint">点击终端直接输入；“发送”会附加回车。</span><a href="/cdn-cgi/access/logout">退出登录</a></footer>
+    </section>
+  </main>
+</body>
+</html>

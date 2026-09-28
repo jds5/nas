@@ -11,9 +11,11 @@
 | [备份盘休眠](docs/operations/备份盘休眠.md) | 磁盘身份、自纠正 cron、监控与待核验效果 |
 | [Android 安全诊断](docs/security/ANDROID_APP_SECURITY_REVIEW.md) | 安全审查、会话启动边界、测试证据与剩余风险 |
 | [Android 控制端](apps/android/README.md) | 独立手机 App、构建安装、安全边界与当前限制 |
+| [NAS 网页终端](apps/web-terminal/README.md) | 整站 Access 保护的 tmux 终端、部署与验证 |
+| [网页终端实施记录](docs/operations/2026-09-29-NAS网页终端.md) | 内部部署、真实 PTY 与浏览器测试、待完成的公网配置 |
 | [手机外网连接与 SSH 配置](docs/operations/手机外网连接与SSH密钥配置.md) | 本机连接信息、手机专用密钥、公网入口与 key-only 步骤 |
 | [手机接入现有 tmux 规划](docs/operations/手机接入现有tmux规划.md) | 当前会话定位、手机接入步骤与远控界面选项 |
-| [Access 实施手册](docs/security/CLOUDFLARE_ACCESS_IMPLEMENTATION.md) | 公开读、登录写的统一鉴权约束和测试矩阵 |
+| [Access 实施手册](docs/security/CLOUDFLARE_ACCESS_IMPLEMENTATION.md) | 公开读/登录写与整站私有应用的统一鉴权约束 |
 | [媒体整理工具](scripts/media/README.md) | Tachiyomi → CBZ 脚本、用法与限制 |
 | [Codex 会话恢复](scripts/codex/README.md) | 从现有 Codex 的 `!` 命令恢复指定 tmux 会话 |
 | [迁移与清理记录](docs/migration/README.md) | 来源、合并删减范围及历史找回方法 |
@@ -29,6 +31,7 @@ docs/
 scripts/media/        # 媒体整理脚本
 scripts/codex/        # 指定 tmux/Codex 会话恢复工具
 apps/android/         # 独立 Android SSH/tmux 控制端
+apps/web-terminal/    # 整站 Access 保护的网页 tmux 终端
 ```
 
 生产配置和其他维护脚本按原记录位于 `/opt/nas` / 独立 `nas-config` 仓库，尚未收录于本项目。取得文件并核对后，再按需增加 `configs/<服务>/` 或 `scripts/<用途>/`，不预建空目录。

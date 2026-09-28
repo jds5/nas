@@ -1,0 +1,40 @@
+name: nas-terminal
+services:
+  web:
+    build: .
+    image: nas-web-terminal:0.1.0
+    container_name: nas_web_terminal
+    restart: unless-stopped
+    init: true
+    user: "${NAS_UID:-1000}:${NAS_GID:-1000}"
+    environment:
+      CF_ACCESS_TEAM_DOMAIN: ${CF_ACCESS_TEAM_DOMAIN:-}
+      CF_ACCESS_AUD: ${CF_ACCESS_AUD:-}
+      CF_ACCESS_ALLOWED_ORIGIN: ${CF_ACCESS_ALLOWED_ORIGIN:-}
+      CF_ACCESS_ALLOWED_EMAILS: ${CF_ACCESS_ALLOWED_EMAILS:-}
+    volumes:
+      - type: bind
+        source: ${TMUX_SOCKET_DIR:-/tmp/tmux-1000}
+        target: /run/host-tmux
+        bind:
+          create_host_path: false
+    read_only: true
+    tmpfs:
+      - /tmp:size=32m,mode=1777
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 64
+    mem_limit: 256m
+    cpus: 1.0
+    logging:
+      driver: json-file
+      options:
+        max-size: 5m
+        max-file: "2"
+    networks:
+      front:
+        aliases: [nas-web-terminal]
+networks:
+  front:
+    name: nas-terminal-front
+    external: true

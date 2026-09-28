@@ -51,6 +51,8 @@ Access JWT 保护管理请求，不能保护没有 JWT 的公开 GET 不绕过 C
 
 ## 容器与管理网络
 
+2026-09-29 用户明确授权开发整站 Access 保护的独立网页终端，作为远程管理入口的特定例外。目标 `terminal.rokano.org`：独立 Access Application/Audience、精确允许邮箱、全路径服务端 JWT 校验、Origin/短期票据保护 WebSocket，Worker 独立回源 Secret 经 NPM 校验后进入独立 `nas-terminal-front` 网络。它具有宿主 tmux 用户权限，不是普通只读页面。当前仅部署拒绝未配置请求的内部容器，公网 Access/Worker/NPM 尚待配置及真实登录验收，不改变其他管理面默认仅 LAN 的约定。实现与回滚见 [网页终端](../../apps/web-terminal/README.md)。
+
 - front 网络只包含 NPM 与对应应用入口；数据库、Redis 与内部任务不与 NPM 同网。应用端口默认不发布到宿主机。
 - 分别限制应用到宿主机、LAN、其他应用与 `npm:81` 的访问，允许必要 DNS、HTTPS/JWKS 和明确业务依赖。不能用 DNS 名解析失败代替 IP/端口可达性测试。
 - 独立 bridge 不自动隔离宿主机/LAN。先核实防火墙后端，区分转发、宿主机 INPUT 和同桥流量；不能把 `DOCKER-USER` 当成覆盖所有路径的规则。

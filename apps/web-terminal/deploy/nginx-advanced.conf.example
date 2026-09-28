@@ -1,0 +1,13 @@
+# Dedicated NPM proxy host: origin-terminal.rokano.org
+# Forward: http://nas-web-terminal:3000; certificate: wildcard *.rokano.org
+# Enable Websockets Support; disable caching and access/error request logs.
+# Replace REPLACE_WITH_64_HEX_WORKER_SECRET locally, never commit the resulting configuration.
+if ($http_x_nas_terminal_origin != "REPLACE_WITH_64_HEX_WORKER_SECRET") { return 403; }
+if ($request_method !~ ^(GET|HEAD|POST)$) { return 403; }
+access_log off;
+error_log /dev/null crit;
+proxy_read_timeout 1000s;
+proxy_send_timeout 30s;
+proxy_buffering off;
+# Verify NPM's generated location preserves Origin, Cf-Access-Jwt-Assertion and
+# Sec-WebSocket-Protocol. Its default proxy forwards these without overriding them.

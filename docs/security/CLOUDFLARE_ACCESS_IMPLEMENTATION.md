@@ -4,6 +4,8 @@
 
 适用于少量受邀 Writer 的实验 Web 项目；不适用于无法完成浏览器登录的媒体原生客户端。机器调用另用独立集成入口和对应认证。
 
+**整站私有应用扩展（2026-09-29）**：用户明确要求整站保护的应用（例如 [NAS 网页终端](../../apps/web-terminal/README.md)）不设置公开读取区。Access Application 保护整个 hostname，服务端对首页、静态资源、所有 API 与 WebSocket upgrade 一律验签；配置缺失时整站 fail closed。下文公开区相关要求及匿名 `200` 测试不适用于此类应用，改为匿名全部拒绝。仍使用独立 Audience、精确身份策略、Origin/CSRF、容器与源站控制。WebSocket 的 attach、输入、resize 都纳入写入面审计，连接不得超出 JWT 有效期，使用有界连接时间支持撤销；不能只鉴权页面而放行长连接。不得另开免鉴权调试或健康 HTTP 路径。
+
 ## 一、固定安全模型
 
 ```text

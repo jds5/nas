@@ -1,0 +1,20 @@
+{
+  "name": "nas-web-terminal",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "esbuild client/app.js --bundle --minify --outdir=public/assets && cp client/index.html public/index.html",
+    "start": "node server/main.mjs",
+    "test": "node --test --test-concurrency=1 test/*.test.mjs"
+  },
+  "dependencies": {
+    "@xterm/addon-fit": "0.11.0",
+    "@xterm/xterm": "6.0.0",
+    "jose": "6.2.12",
+    "node-pty": "1.1.0",
+    "ws": "8.22.0"
+  },
+  "devDependencies": { "esbuild": "0.28.2" },
+  "engines": { "node": ">=24" }
+}
