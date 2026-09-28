@@ -1,8 +1,12 @@
 # Merge into existing origin-home.rokano.org NPM Advanced; preserve all existing configuration.
 # Shared existing Worker ingress; the terminal application verifies its own Access JWT on every request.
 location = /terminal {
+    client_max_body_size 20m;
+    client_body_timeout 60s;
+    proxy_request_buffering off;
     if ($request_method !~ ^(GET|HEAD|POST)$) { return 403; }
-    resolver 127.0.0.11 valid=30s;
+    resolver 127.0.0.11 valid=10s;
+    resolver_timeout 3s;
     set $nas_terminal_upstream http://nas-web-terminal:3000;
     proxy_pass $nas_terminal_upstream$request_uri;
     proxy_http_version 1.1;
@@ -19,8 +23,12 @@ location = /terminal {
     error_log /dev/null crit;
 }
 location ^~ /terminal/ {
+    client_max_body_size 20m;
+    client_body_timeout 60s;
+    proxy_request_buffering off;
     if ($request_method !~ ^(GET|HEAD|POST)$) { return 403; }
-    resolver 127.0.0.11 valid=30s;
+    resolver 127.0.0.11 valid=10s;
+    resolver_timeout 3s;
     set $nas_terminal_upstream http://nas-web-terminal:3000;
     proxy_pass $nas_terminal_upstream$request_uri;
     proxy_http_version 1.1;

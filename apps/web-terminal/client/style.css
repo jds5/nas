@@ -275,36 +275,24 @@ h2 {
   background: #132220;
   margin-bottom: 8px;
 }
-.keyboard-bar {
-  border-top: 1px solid var(--border);
-  display: flex;
-  gap: 6px;
-  padding: 9px 14px;
-  overflow-x: auto;
-  flex-shrink: 0;
-}
-.keyboard-bar button {
-  min-width: 42px;
-  padding: 7px 10px;
-  background: #18212b;
-}
-.keyboard-bar #keyboard {
-  margin-left: auto;
-  white-space: nowrap;
-}
 #composer {
+  border-top: 1px solid var(--border);
+  padding-top: 12px;
+  flex-shrink: 0;
   display: flex;
+  flex-direction: column;
   align-items: stretch;
   gap: 8px;
   margin: 0;
-  padding: 0 14px 10px;
+  padding: 12px 14px 10px;
 }
 textarea {
-  resize: none;
+  resize: vertical;
   flex: 1;
   min-width: 0;
-  min-height: 39px;
-  max-height: 100px;
+  min-height: 156px;
+  height: 156px;
+  max-height: 360px;
   line-height: 1.7;
   font: inherit;
   font-size: 13px;
@@ -362,146 +350,16 @@ footer a {
   scrollbar-width: thin;
   scrollbar-color: #334151 transparent;
 }
-@media (max-width: 760px) {
-  header {
-    height: 54px;
-    padding: 0 14px;
-  }
-  .brand {
-    font-size: 14px;
-  }
-  .brand-icon {
-    font-size: 16px;
-    padding: 5px 8px;
-  }
-  .access-badge {
-    font-size: 10px;
-  }
-  main {
-    display: flex;
-    flex-direction: column;
-    padding: 10px;
-    gap: 10px;
-  }
-  aside {
-    padding: 0;
-    overflow: visible;
-    flex-shrink: 0;
-  }
-  .section-heading {
-    float: left;
-    margin-right: 10px;
-    height: 39px;
-    gap: 10px;
-  }
-  .section-heading h1 {
-    font-size: 13px;
-  }
-  .intro,
-  .aside-note {
-    display: none;
-  }
-  #sessions {
-    display: flex;
-    gap: 7px;
-    overflow: auto;
-  }
-  .session {
-    padding: 8px 12px;
-    flex-shrink: 0;
-    max-width: 180px;
-    gap: 3px;
-  }
-  .session strong {
-    font-size: 12px;
-  }
-  .session span {
-    font-size: 9px;
-  }
-  #list-status {
-    margin: 5px 0 0;
-    font-size: 10px;
-  }
-  #list-status:empty {
-    display: none;
-  }
-  .workspace {
-    flex: 1;
-    border-radius: 9px;
-  }
-  .terminal-heading {
-    min-height: 48px;
-    padding: 8px 10px;
-  }
-  .terminal-heading > div:first-child {
-    gap: 6px;
-  }
-  #state {
-    display: none;
-  }
-  .actions button {
-    padding: 6px 8px;
-  }
-  #terminal {
-    inset: 8px 4px 4px 7px;
-  }
-  .keyboard-bar {
-    padding: 7px;
-    gap: 5px;
-  }
-  .keyboard-bar button {
-    min-width: 34px;
-    padding: 8px;
-    font-size: 12px;
-  }
-  #composer {
-    padding: 0 7px 8px;
-    gap: 5px;
-  }
-  #composer button {
-    padding: 8px;
-    font-size: 12px;
-  }
-  textarea {
-    font-size: 16px;
-    padding: 7px;
-    min-height: 38px;
-  }
-  textarea::placeholder {
-    font-size: 12px;
-  }
-  footer {
-    padding: 0 9px 8px;
-    font-size: 9px;
-  }
-  h2 {
-    font-size: 18px;
-  }
-  #notice {
-    font-size: 11px;
-    padding: 7px 10px;
-  }
-}
-@media (max-height: 540px) {
-  header,
-  .intro,
-  .aside-note,
-  footer {
-    display: none;
-  }
-  main {
-    padding: 5px;
-    gap: 5px;
-  }
-  .terminal-heading {
-    min-height: 39px;
-  }
-  .keyboard-bar {
-    padding-top: 4px;
-    padding-bottom: 4px;
-  }
-  .keyboard-bar button {
-    padding-top: 5px;
-    padding-bottom: 5px;
-  }
-}
+
+body { min-width: 900px; }
+#draft { flex: none; font-size: 15px; line-height: 1.65; }
+.composer-actions { display: flex; align-items: center; gap: 16px; }
+.composer-actions span { color: var(--muted); font-size: 12px; }
+#send { margin-left: auto; min-width: 96px; }
+#attachments { display: flex; flex-wrap: wrap; gap: 10px; }
+#attachments:empty { display: none; }
+.attachment { display: flex; align-items: center; gap: 8px; background: #18242e; border-radius: 7px; padding: 6px; max-width: 380px; }
+.attachment img { width: 48px; height: 48px; object-fit: cover; border-radius: 4px; }
+.attachment span { font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.attachment button { padding: 4px 7px; white-space: nowrap; }
+#composer.dragging { background: #18372e; outline: 1px dashed var(--accent); }

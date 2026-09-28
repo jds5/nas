@@ -2,7 +2,8 @@ import http from 'node:http';
 import { randomBytes } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
-import { WebSocketServer, WebSocket } from 'ws';
+import { WebSocketServer } from 'ws';
+import { connectTerminal, validSize } from './terminal.mjs';
 import { authorizer } from './auth.mjs';
 import { Tmux } from './tmux.mjs';
 
@@ -17,7 +18,7 @@ const headers = {
   'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff',
   'Referrer-Policy': 'no-referrer', 'X-Frame-Options': 'DENY',
   'Permissions-Policy': 'camera=(), microphone=(), geolocation=(), clipboard-read=(), clipboard-write=()',
-  'Content-Security-Policy': "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; font-src 'self'; img-src 'self' data:; frame-ancestors 'none'; base-uri 'none'; form-action 'none'",
+  'Content-Security-Policy': "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; font-src 'self'; img-src 'self' data: blob:; frame-ancestors 'none'; base-uri 'none'; form-action 'none'",
 };
 function reply(res, code, value) {
   res.writeHead(code, { ...headers, 'Content-Type': 'application/json; charset=utf-8' });
@@ -36,7 +37,7 @@ function reject(socket) {
   socket.end('HTTP/1.1 403 Forbidden\r\nConnection: close\r\nCache-Control: no-store\r\nContent-Length: 0\r\n\r\n');
 }
 
-export function createApp({ config, keyResolver, tmux = new Tmux(), maxDurationMs = 15 * 60 * 1000 } = {}) {
+export function createApp({ config, keyResolver, tmux = new Tmux(), uploads, maxDurationMs = 15 * 60 * 1000 } = {}) {
   const authenticate = authorizer(config, keyResolver);
   const tickets = new Map();
   const peers = new Map();
@@ -47,7 +48,7 @@ export function createApp({ config, keyResolver, tmux = new Tmux(), maxDurationM
   const wsServer = new WebSocketServer({ noServer: true, maxPayload: 32768, perMessageDeflate: false,
     handleProtocols: protocols => protocols.has('nas-terminal.v1') ? 'nas-terminal.v1' : false });
 
-  const server = http.createServer({ maxHeaderSize: 24576, requestTimeout: 10000, headersTimeout: 10000 }, async (req, res) => {
+  const server = http.createServer({ maxHeaderSize: 24576, requestTimeout: 65000, headersTimeout: 10000 }, async (req, res) => {
     try {
       const user = await authenticate(req);
       if (!user) return reply(res, 403, { error: '请重新通过 Access 登录' });
@@ -65,8 +66,17 @@ export function createApp({ config, keyResolver, tmux = new Tmux(), maxDurationM
         }
         return reply(res, 404, { error: '页面不存在' });
       }
-      if (req.method !== 'POST' || req.url !== '/terminal/manage/api/connections' || !originOK(req) ||
+      if (req.method !== 'POST' || !originOK(req) ||
           req.headers['x-nas-csrf-origin'] !== config.origin) return reply(res, 403, { error: '请求被拒绝' });
+      if (req.url === '/terminal/manage/api/uploads' && uploads) {
+        let ref;
+        try { ref = JSON.parse(decodeURIComponent(req.headers['x-session-ref'] || '')); }
+        catch { return reply(res, 400, { error: '会话信息无效' }); }
+        const snapshot = await tmux.snapshot(ref);
+        if (!snapshot) return reply(res, 409, { error: '会话已变化，请重新连接' });
+        return reply(res, 201, await uploads.receive(req, user, ref, snapshot.pane));
+      }
+      if (req.url !== '/terminal/manage/api/connections') return reply(res, 403, { error: '请求被拒绝' });
       const ref = await body(req);
       if (!await tmux.exists(ref)) return reply(res, 409, { error: '会话已变化，请刷新列表' });
       reap();
@@ -74,9 +84,10 @@ export function createApp({ config, keyResolver, tmux = new Tmux(), maxDurationM
         return reply(res, 429, { error: '连接过多，请关闭其他连接后重试' });
       }
       const ticket = randomBytes(32).toString('base64url');
-      tickets.set(ticket, { ref: { id: ref.id, generation: ref.generation }, sub: user.sub, expires: Date.now() + 30000 });
+      tickets.set(ticket, { ref: { id: ref.id, generation: ref.generation, ...(validSize(ref) ? { cols: ref.cols, rows: ref.rows } : {}) }, sub: user.sub, expires: Date.now() + 30000 });
       return reply(res, 201, { ticket });
     } catch (err) {
+      if (err.publicMessage) return reply(res, err.status, { error: err.publicMessage });
       reply(res, err instanceof SyntaxError || err.message === 'bad_body' ? 400 : 503,
         { error: '请求失败，请刷新；确认 NAS 的 tmux 服务仍在运行' });
     }
@@ -102,62 +113,11 @@ export function createApp({ config, keyResolver, tmux = new Tmux(), maxDurationM
       if (!await tmux.exists(ticket.ref) || socket.destroyed || peers.size >= 8 || userCount(user.sub) >= 4) return reject(socket);
       wsServer.handleUpgrade(req, socket, head, ws => {
         peers.set(ws, user.sub);
-        connectTerminal(ws, ticket.ref, user);
+        connectTerminal({ ws, ref: ticket.ref, user, tmux, peers, uploads, maxDurationMs });
       });
     } catch { reject(socket); }
     finally { pendingUpgrades--; }
   });
-
-  function connectTerminal(ws, ref, user) {
-    let term;
-    let closed = false;
-    let queued = 0;
-    let alive = true;
-    const deadline = Math.min(user.exp * 1000, Date.now() + maxDurationMs);
-    const finish = () => {
-      if (closed) return;
-      closed = true;
-      clearTimeout(expiry); clearInterval(heartbeat);
-      peers.delete(ws);
-      try { term?.kill(); } catch { /* client already exited */ }
-    };
-    const expiry = setTimeout(() => { finish(); ws.close(4001, 'reauthenticate'); }, Math.max(0, deadline - Date.now()));
-    const heartbeat = setInterval(() => {
-      if (!alive) return ws.terminate();
-      alive = false; ws.ping();
-    }, 30000);
-    ws.on('pong', () => { alive = true; });
-    ws.on('close', finish);
-    ws.on('error', finish);
-    try { term = tmux.attach(ref); }
-    catch { finish(); ws.close(1011, 'terminal_unavailable'); return; }
-    const send = value => {
-      if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(value));
-    };
-    term.onData(data => {
-      if (closed || ws.readyState !== WebSocket.OPEN) return;
-      queued += Buffer.byteLength(data);
-      if (queued > 1024 * 1024 || ws.bufferedAmount > 512 * 1024) { finish(); ws.close(4002, 'slow_client'); return; }
-      send({ type: 'output', data });
-      if (queued > 256 * 1024) term.pause();
-    });
-    term.onExit(() => { finish(); ws.close(1000, 'detached'); });
-    ws.on('message', (raw, binary) => {
-      if (closed || Date.now() >= deadline) { finish(); ws.close(4001, 'reauthenticate'); return; }
-      try {
-        if (binary) throw new Error();
-        const msg = JSON.parse(raw.toString());
-        if (msg.type === 'input' && typeof msg.data === 'string' && Buffer.byteLength(msg.data) <= 16384) term.write(msg.data);
-        else if (msg.type === 'resize' && Number.isInteger(msg.cols) && Number.isInteger(msg.rows) &&
-            msg.cols >= 20 && msg.cols <= 400 && msg.rows >= 5 && msg.rows <= 160) term.resize(msg.cols, msg.rows);
-        else if (msg.type === 'ack' && Number.isInteger(msg.bytes) && msg.bytes > 0 && msg.bytes <= queued) {
-          queued -= msg.bytes;
-          if (queued < 64 * 1024) term.resume();
-        } else throw new Error();
-      } catch { finish(); ws.close(1008, 'invalid_message'); }
-    });
-    send({ type: 'ready', expires: deadline });
-  }
 
   function shutdown() {
     for (const ws of peers.keys()) ws.terminate();

@@ -3,10 +3,11 @@ import assert from 'node:assert/strict';
 import { once } from 'node:events';
 import { generateKeyPair, exportJWK, SignJWT, createLocalJWKSet } from 'jose';
 import { WebSocket } from 'ws';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, mkdir, copyFile, chmod } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { createApp } from '../server/app.mjs';
 import { accessConfig } from '../server/auth.mjs';
+import { UploadStore } from '../server/uploads.mjs';
 import { Tmux } from '../server/tmux.mjs';
 
 const config = { issuer: 'https://test.cloudflareaccess.com', audience: 'terminal-test-only', origin: 'https://terminal.example.test', emails: ['owner@example.test'] };
@@ -43,7 +44,8 @@ before(async () => {
   keys = createLocalJWKSet({ keys: [{ ...await exportJWK(pair.publicKey), kid: 'test' }] });
   dir = await mkdtemp(`${tmpdir()}/nas-terminal-test-`); tmux = new Tmux(`${dir}/tmux`);
   await tmux.command(['-f', '/dev/null', 'new-session', '-d', '-s', 'web-test', '/bin/sh']);
-  app = createApp({ config, keyResolver: keys, tmux });
+  await mkdir(`${dir}/uploads`);
+  app = createApp({ config, keyResolver: keys, tmux, uploads: new UploadStore(`${dir}/uploads`, `${dir}/uploads`) });
   app.server.listen(0, '127.0.0.1'); await once(app.server, 'listening');
   url = `http://127.0.0.1:${app.server.address().port}`;
 });
@@ -159,3 +161,55 @@ async function waitFor(check) {
   while (Date.now() < deadline) { if (await check()) return; await new Promise(r => setTimeout(r, 30)); }
   assert.fail('condition did not become true');
 }
+
+test('switch reuses WebSocket, separates epochs, preserves both sessions and rejects stale input', { timeout: 10000 }, async () => {
+  await tmux.command(['new-session', '-d', '-s', 'switch-test', '/bin/sh']);
+  const refs = await tmux.list(), first = refs.find(x => x.name === 'web-test'), second = refs.find(x => x.name === 'switch-test');
+  const assertion = await token(), ws = wsConnect(assertion, await reservation(assertion, first));
+  const messages = [];
+  ws.on('message', raw => {
+    const m = JSON.parse(raw); messages.push(m);
+    if (m.type === 'output' && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'ack', bytes: Buffer.byteLength(m.data), epoch: m.epoch }));
+  });
+  try {
+    await once(ws, 'open');
+    ws.send(JSON.stringify({ type: 'switch', ref: second, epoch: 1, cols: 100, rows: 30 }));
+    await waitFor(() => messages.some(x => x.type === 'ready' && x.epoch === 1));
+    ws.send(JSON.stringify({ type: 'input', data: "touch /tmp/unused", epoch: 0 }));
+    ws.send(JSON.stringify({ type: 'input', data: "printf 'SWITCH_%s_OK\\n' 'SECOND'\r", epoch: 1 }));
+    await waitFor(() => messages.filter(x => x.type === 'output' && x.epoch === 1).map(x => x.data).join('').includes('SWITCH_SECOND_OK'));
+    const screen = await tmux.command(['capture-pane', '-p', '-t', second.id]);
+    assert.ok(!screen.includes('touch /tmp/unused'));
+    assert.equal(await tmux.exists(first), true); assert.equal(await tmux.exists(second), true);
+  } finally { ws.close(); await once(ws, 'close'); await tmux.command(['kill-session', '-t', second.id]); }
+});
+test('upload endpoint enforces CSRF; attached Codex receives image path, shell cannot receive image submission', { timeout: 10000 }, async () => {
+  const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9ZlZsAAAAASUVORK5CYII=', 'base64');
+  const assertion = await token();
+  await copyFile('/bin/cat', `${dir}/codex`); await chmod(`${dir}/codex`, 0o755);
+  await tmux.command(['new-session', '-d', '-s', 'image-test', `${dir}/codex`]);
+  const ref = (await tmux.list()).find(x => x.name === 'image-test');
+  const uploadHeaders = { 'cf-access-jwt-assertion': assertion, origin: config.origin, 'x-nas-csrf-origin': config.origin,
+    'content-type': 'image/png', 'x-session-ref': encodeURIComponent(JSON.stringify(ref)), 'x-upload-name': encodeURIComponent('截图.png') };
+  const bad = await fetch(url + '/terminal/manage/api/uploads', { method: 'POST', headers: { ...uploadHeaders, origin: 'https://evil.test' }, body: png });
+  assert.equal(bad.status, 403);
+  const good = await fetch(url + '/terminal/manage/api/uploads', { method: 'POST', headers: uploadHeaders, body: png });
+  assert.equal(good.status, 201); const item = await good.json();
+  const ws = wsConnect(assertion, await reservation(assertion, ref)); const messages = [];
+  ws.on('message', raw => messages.push(JSON.parse(raw)));
+  try {
+    await once(ws, 'open');
+    ws.send(JSON.stringify({ type: 'submit-images', requestId: 'image-message', text: '描述图片', attachments: [item.id], epoch: 0 }));
+    await waitFor(() => messages.some(x => x.type === 'submitted'));
+    await waitFor(() => messages.filter(x => x.type === 'output').map(x => x.data).join('').includes(item.id + '.png'));
+  } finally { ws.close(); await once(ws, 'close'); await tmux.command(['kill-session', '-t', ref.id]); }
+  const shellRef = (await tmux.list()).find(x => x.name === 'web-test');
+  const shell = wsConnect(assertion, await reservation(assertion, shellRef)); const replies = [];
+  shell.on('message', raw => replies.push(JSON.parse(raw)));
+  try {
+    await once(shell, 'open');
+    shell.send(JSON.stringify({ type: 'submit-images', requestId: 'shell-rejected', text: '', attachments: [item.id], epoch: 0 }));
+    await waitFor(() => replies.some(x => x.type === 'submission-error'));
+    assert.ok(!replies.some(x => x.type === 'submitted'));
+  } finally { shell.close(); await once(shell, 'close'); }
+});

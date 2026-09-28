@@ -28,13 +28,13 @@
       </div>
       <div id="notice" role="status" hidden></div>
       <div id="terminal-wrap"><div id="empty"><span class="empty-icon">&gt;_</span><h2>你的工作，一直都在。</h2><p>从会话列表选择，继续操作 NAS。<br>支持 Codex、命令行与启动确认界面。</p></div><div id="terminal" hidden></div></div>
-      <div class="keyboard-bar" aria-label="终端快捷键">
-        <button data-key="esc">Esc</button><button data-key="tab">Tab</button><button id="ctrl" aria-pressed="false">Ctrl</button>
-        <button data-key="up" aria-label="上方向键">↑</button><button data-key="down" aria-label="下方向键">↓</button><button data-key="left" aria-label="左方向键">←</button><button data-key="right" aria-label="右方向键">→</button>
-        <button data-key="enter">Enter</button><button id="keyboard">键盘</button>
-      </div>
-      <form id="composer" autocomplete="off"><label for="draft" class="sr-only">中文或长文本输入</label><textarea id="draft" rows="1" placeholder="中文或长文本，在这里输入后粘贴到终端" spellcheck="false"></textarea><button id="paste" type="button" disabled>粘贴</button><button id="send" type="submit" disabled>发送 ↵</button></form>
-      <footer><span id="hint">点击终端直接输入；“发送”会附加回车。</span><a href="/cdn-cgi/access/logout">退出登录</a></footer>
+      <form id="composer" autocomplete="off">
+        <div id="attachments" aria-label="待发送图片"></div>
+        <label for="draft" class="sr-only">消息输入</label>
+        <textarea id="draft" rows="6" placeholder="输入消息，或粘贴、拖入图片…" spellcheck="false"></textarea>
+        <div class="composer-actions"><button id="attach" title="PNG/JPEG/WebP，最多 4 张，共 20 MiB" type="button" disabled>添加图片</button><input id="image-files" type="file" accept="image/png,image/jpeg,image/webp" multiple hidden><span>Enter 发送 · Ctrl+J 换行</span><button id="send" type="submit" disabled>发送 ↵</button></div>
+      </form>
+      <footer><span id="hint">点击终端可直接操作命令行或初始化菜单。</span><a href="/cdn-cgi/access/logout">退出登录</a></footer>
     </section>
   </main>
 </body>

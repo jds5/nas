@@ -1,4 +1,4 @@
-// Run inside NPM: node /tmp/nas-terminal-routing.mjs apply|remove
+// Run inside NPM: node /tmp/nas-terminal-routing.mjs apply|update|remove
 // Requires /tmp/nas-terminal-location.conf (copy the reviewed location template).
 // Uses NPM's model/config generator. Only the marked terminal block is changed.
 import fs from 'node:fs';
@@ -10,7 +10,7 @@ const end = '# END nas-web-terminal';
 const action = process.argv[2];
 const getHost = () => Model.query().findById(7).withGraphFetched('certificate').modifyGraph('certificate', b => b.select('id', 'provider'));
 try {
-  if (!['apply', 'remove'].includes(action)) throw new Error('expected apply or remove');
+  if (!['apply', 'update', 'remove'].includes(action)) throw new Error('expected apply, update or remove');
   const host = await getHost();
   if (!host?.enabled || host.access_list_id || !host.domain_names.includes('origin-home.rokano.org')) throw new Error('unexpected proxy boundary');
   const original = host.advanced_config || '';
@@ -23,7 +23,8 @@ try {
     const start = original.indexOf(`\n${begin}\n`);
     const finish = original.indexOf(`\n${end}\n`, start);
     if (start < 0 || finish < 0) throw new Error('marked terminal block missing');
-    next = original.slice(0, start) + original.slice(finish + end.length + 2);
+    const replacement = action === 'update' ? `\n${begin}\n${fs.readFileSync('/tmp/nas-terminal-location.conf', 'utf8').trimEnd()}\n${end}\n` : '';
+    next = original.slice(0, start) + replacement + original.slice(finish + end.length + 2);
   }
   const backup = `/data/nas-terminal-routing-${Date.now()}.json`;
   fs.writeFileSync(backup, JSON.stringify({ id: host.id, advanced_config: original, locations: host.locations }), { mode: 0o600, flag: 'wx' });

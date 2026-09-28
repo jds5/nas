@@ -28,3 +28,11 @@
 4. 独立 Access 应用及精确允许身份、反代与 Worker 配置，最后进行公网和真实用户验收。没有配置或验收失败时不开放入口。
 
 实现与验证结果见 [README](README.md) 和对应运维记录。统一鉴权规则见 [Access 手册](../../docs/security/CLOUDFLARE_ACCESS_IMPLEMENTATION.md)。
+
+## PC 优化与图片上传增量审计（2026-09-29）
+
+- `POST /terminal/manage/api/uploads`：浏览器上传 PNG/JPEG/WebP 到独立宿主目录 `.nas-web-uploads`，最多 4 张/消息、合计 20 MiB，存储配额 512 MiB。JWT、Origin、CSRF、会话引用、格式、限额校验后以随机文件名写入。无公开图片 URL，无上传执行或自动删除历史图片。
+- `/terminal/manage/ws` 新增 `switch`：复用已鉴权连接，重新验证目标会话，释放旧 client，连接新 client；epoch 防止旧输出/输入串入新会话，不延长 JWT/连接有效期。
+- `/terminal/manage/ws` 新增 `submit-images`：图片绑定验签身份、session generation 和 pane ID。核对当前前台 Codex 后提交图片路径说明，拒绝非 Codex 及 `/`、`!` 命令混发；确认超时保留草稿，不自动重发。
+- 前端新增文件选择、拖放、剪贴板上传，图片预览使用浏览器本地 blob URL；各会话保留独立草稿。Enter 发送、Ctrl+J 换行，输入法确认不发送。移除移动端按键栏，默认输入高度 156 px。
+- 性能基线（本机 15 次只读采样）：list 中位 38.8 ms；exists 中位 41.0 ms、最大 53.6 ms。连接中的全列表检查改为单目标检查，切换复用 WebSocket，初始尺寸在连接时传入，ACK 合并至 32 KiB/40 ms，尺寸通知按帧去重。不修改 tmux window-size 策略。
