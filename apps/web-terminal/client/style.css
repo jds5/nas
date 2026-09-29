@@ -387,3 +387,32 @@ footer a { margin-left: auto; }
 .history-heading { flex-wrap: wrap; flex-shrink: 0; }
 .history-controls { display: flex; flex-wrap: wrap; gap: 8px; }
 .history-tip { font-size: 11px; color: var(--muted); padding: 4px 12px; }
+
+.history-tabs { display: flex; gap: 6px; }
+.history-tabs button[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); background: #203831; }
+#conversation-content { flex: 1; min-height: 0; min-width: 0; overflow: auto; padding: 12px 24px 24px; }
+.chat-toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; }
+#chat-status { font-size: 12px; color: var(--muted); }
+#chat-messages { max-width: 1200px; margin: 0 auto; }
+.chat-message { margin: 0 0 20px; padding: 18px 20px; border: 1px solid #2b3946; border-radius: 10px; min-width: 0; background: #141e27; }
+.chat-message.user { background: #1b2d33; }
+.chat-author { font-size: 12px; color: #80d9c4; margin-bottom: 12px; font-weight: 600; }
+.chat-body { font-size: var(--terminal-font, 16px); line-height: 1.7; overflow-wrap: anywhere; }
+.chat-message.user .chat-body { white-space: pre-wrap; }
+.chat-body > :first-child { margin-top: 0; }
+.chat-body > :last-child { margin-bottom: 0; }
+.chat-body h1 { font-size: 1.6em; } .chat-body h2 { font-size: 1.35em; } .chat-body h3 { font-size: 1.15em; }
+.chat-body ul, .chat-body ol { padding-left: 1.8em; }
+.chat-body a { color: #94c8ff; text-decoration: underline; }
+.chat-body blockquote { border-left: 3px solid #80d9c4; margin-left: 0; padding-left: 16px; color: #b6c5d6; }
+.chat-body code { font-family: Consolas, monospace; background: #0c131a; padding: 2px 5px; border-radius: 4px; }
+.chat-code { background: #0c131a; border: 1px solid #314252; border-radius: 6px; margin: 14px 0; padding: 8px; }
+.chat-code pre { overflow: auto; white-space: pre; margin: 8px; padding-bottom: 8px; }
+.chat-code code { padding: 0; }
+.copy-code { display: block; margin-left: auto; font-size: 12px; }
+.chat-table { overflow-x: auto; margin: 14px 0; padding-bottom: 8px; }
+.chat-table table { width: max-content; min-width: 100%; border-collapse: collapse; }
+.chat-table th, .chat-table td { border: 1px solid #3b4a5c; padding: 9px 14px; text-align: left; white-space: pre-wrap; max-width: 520px; min-width: 100px; }
+.chat-table th { background: #233341; font-weight: 700; }
+.chat-table tr:nth-child(even) { background: #192631; }
+.chat-toolbar { position: sticky; top: 0; z-index: 1; padding: 8px 0; background: #10151b; border-bottom: 1px solid #26303c; }

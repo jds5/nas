@@ -266,3 +266,42 @@ test('history snapshots read tmux scrollback without entering copy mode or sendi
     assert.equal(history.epoch, 0); assert.equal(typeof history.data, 'string');
   } finally { ws.close(); await once(ws, 'close'); }
 });
+
+test('Codex reading is bound to current epoch, cancels on switch and rejects shell history', async () => {
+  let resolveRead, called = 0, aborted = false;
+  const conversation = { read: async (_request, signal) => {
+    called++; signal.addEventListener('abort', () => { aborted = true; });
+    return new Promise(resolve => { resolveRead = resolve; });
+  } };
+  await tmux.command(['new-session', '-d', '-s', 'reader-test', `${dir}/codex`]);
+  const ref = (await tmux.list()).find(x => x.name === 'reader-test');
+  const shell = (await tmux.list()).find(x => x.name === 'web-test');
+  const instance = createApp({ config, keyResolver: keys, tmux, conversation });
+  instance.server.listen(0, '127.0.0.1'); await once(instance.server, 'listening');
+  const previous = url; url = `http://127.0.0.1:${instance.server.address().port}`;
+  let ws;
+  try {
+    const assertion = await token();
+    ws = wsConnect(assertion, await reservation(assertion, ref)); const messages = [];
+    ws.on('message', raw => messages.push(JSON.parse(raw)));
+    await once(ws, 'open');
+    ws.send(JSON.stringify({ type: 'conversation', requestId: 'read-first', epoch: 0 }));
+    await waitFor(() => called === 1);
+    resolveRead({ ok: true, binding: 'a'.repeat(64), messages: [{ id: '1', role: 'assistant', text: '| A | B |' }], before: 0, hasOlder: false });
+    await waitFor(() => messages.some(m => m.type === 'conversation' && m.ok));
+    ws.send(JSON.stringify({ type: 'conversation', requestId: 'read-stale', epoch: 0 }));
+    await waitFor(() => called === 2);
+    ws.send(JSON.stringify({ type: 'switch', ref: shell, epoch: 1, cols: 100, rows: 30 }));
+    await waitFor(() => messages.some(m => m.type === 'ready' && m.epoch === 1));
+    assert.equal(aborted, true);
+    resolveRead({ ok: true, messages: [{ text: 'STALE_PRIVATE' }] });
+    await new Promise(r => setTimeout(r, 100));
+    assert.ok(!messages.some(m => m.requestId === 'read-stale'));
+    ws.send(JSON.stringify({ type: 'conversation', requestId: 'shell-read', epoch: 1 }));
+    await waitFor(() => messages.some(m => m.requestId === 'shell-read'));
+    assert.equal(messages.find(m => m.requestId === 'shell-read').ok, false);
+    assert.equal(called, 2);
+    ws.send(JSON.stringify({ type: 'conversation', requestId: 'bad-cursor', before: -1, binding: 'a'.repeat(64), epoch: 1 }));
+    const [code] = await once(ws, 'close'); assert.equal(code, 1008);
+  } finally { ws?.terminate(); instance.shutdown(); url = previous; await tmux.command(['kill-session', '-t', ref.id]); }
+});

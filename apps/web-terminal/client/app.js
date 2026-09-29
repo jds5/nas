@@ -2,6 +2,7 @@ import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
 import './style.css';
+import { conversationView } from './conversation.js';
 import { renderHistory } from './history.mjs';
 const $ = id => document.getElementById(id);
 function preference(name, fallback) { try { return localStorage.getItem(name) ?? fallback; } catch { return fallback; } }
@@ -18,7 +19,8 @@ const maxBytes = 20 * 1024 * 1024;
 let opened = false, socket, selected, connecting = false, ready = false, revision = 0, epoch = 0;
 let sessions = [], switchQueued, composing = false, frameScheduled = false, lastSize = '';
 let terminalMode = true, manualComposer = false;
-let expires = 0, historyOpen = false, historyTimer;
+let expires = 0, historyOpen = false, historyTimer, historyMode = 'terminal';
+const chat = conversationView({ send: sendFrame, connected });
 let pendingAck = 0, ackTimer, submission;
 const key = ref => ref && `${ref.id}|${ref.generation}`;
 function draft(ref = selected) {
@@ -32,6 +34,7 @@ function updateState(text) {
   const active = connected(), d = draft();
   $('connection-dot').classList.toggle('idle', !active);
   $('detach').disabled = !socket && !connecting;
+  $('open-history').disabled = !active || selected?.kind === 'ssh';
   $('send').disabled = !active || Boolean(submission) || d.files.some(x => !x.uploaded || x.uploading);
   $('attach').disabled = !active || Boolean(submission) || d.files.length >= 4;
   $('draft').disabled = Boolean(submission);
@@ -77,16 +80,33 @@ function updateExpiry() {
 }
 setInterval(updateExpiry, 1000);
 function closeHistory(focus = true) {
-  historyOpen = false; clearTimeout(historyTimer); $('history').hidden = true; $('history-content').textContent = '';
+  historyOpen = false; chat.close(); clearTimeout(historyTimer); $('history').hidden = true; $('history-content').textContent = '';
   if (focus && opened) term.focus();
 }
-function openHistory() {
-  if (!connected() || historyOpen) return;
-  $('history-content').scrollLeft = 0;
-  historyOpen = true; $('history').hidden = false; $('history-content').textContent = '正在读取历史…'; $('history-content').focus();
-  sendFrame({ type: 'history' });
-  historyTimer = setTimeout(() => { if (historyOpen) $('history-content').textContent = '读取超时，请返回实时终端后重试。'; }, 5000);
+function historyTab(mode) {
+  historyMode = mode; clearTimeout(historyTimer); chat.close();
+  const isChat = mode === 'chat';
+  $('history-content').hidden = isChat; $('conversation-content').hidden = !isChat;
+  $('history-wrap').hidden = isChat;
+  $('history-chat').setAttribute('aria-pressed', String(isChat));
+  $('history-terminal').setAttribute('aria-pressed', String(!isChat));
+  document.querySelector('.history-tip').textContent = isChat ? 'Codex 原始消息 · Markdown 阅读 · 返回终端可处理菜单与输入' : '最近最多 1000 行及当前屏幕；Shift＋滚轮或底部滚动条横向查看。';
+  if (isChat) { chat.open(); $('conversation-content').focus(); }
+  else {
+    $('history-content').textContent = '正在读取历史…'; $('history-content').focus();
+    sendFrame({ type: 'history' });
+    historyTimer = setTimeout(() => { if (historyOpen && historyMode === 'terminal') $('history-content').textContent = '读取超时，请返回实时终端后重试。'; }, 5000);
+  }
 }
+function openHistory() {
+  if (!connected() || historyOpen || selected?.kind === 'ssh') return;
+  historyOpen = true; $('history').hidden = false;
+  $('history-chat').hidden = terminalMode;
+  historyTab(terminalMode ? 'terminal' : 'chat');
+}
+$('open-history').onclick = openHistory;
+$('history-chat').onclick = () => historyTab('chat');
+$('history-terminal').onclick = () => historyTab('terminal');
 $('history-wrap').onclick = () => {
   const wrapped = $('history-content').classList.toggle('wrap-lines');
   $('history-wrap').setAttribute('aria-pressed', String(wrapped));
@@ -201,8 +221,10 @@ async function connect(session) {
       } else if (msg.type === 'mode') {
         const hadFocus = document.activeElement === $('draft') || document.activeElement?.classList.contains('xterm-helper-textarea');
         setMode(msg.mode); if (hadFocus) focusInput();
+      } else if (msg.type === 'conversation') {
+        if (historyOpen && historyMode === 'chat') chat.receive(msg);
       } else if (msg.type === 'history' || msg.type === 'history-error') {
-        if (!historyOpen) return;
+        if (!historyOpen || historyMode !== 'terminal') return;
         clearTimeout(historyTimer);
         renderHistory($('history-content'), msg.type === 'history' ? msg.data : '历史读取失败，请返回实时终端后重试。');
         $('history-content').scrollLeft = 0;

@@ -11,7 +11,8 @@
 - PNG/JPEG/WebP 图片选择、拖放、剪贴板粘贴和预览；每条消息最多 4 张，总量 20 MiB。
 - 切换复用已鉴权 WebSocket，各会话独立保留文字/图片草稿；失败和未确认消息不自动重发。
 - 断开和重连仅操作本网页的 tmux client，不向任务发送 Ctrl-C，不踢掉其他客户端。
-- 不自动新建或删除会话、不解析 Codex 对话格式、不存储终端记录。需要新会话时可在已连接的终端通过 tmux 自身操作。
+- Codex 上滚默认打开 Markdown 对话阅读，普通 shell 使用终端历史；支持分页、刷新、表格横向滚动与代码复制。
+- 不自动新建或删除会话、不持久保存对话或终端记录。需要新会话时可在已连接的终端通过 tmux 自身操作。
 
 ## 边界
 
@@ -48,7 +49,7 @@
 cd /home/yao/code/nas/apps/web-terminal
 docker build --target test -t nas-web-terminal:test .
 docker run --rm --init --cap-drop ALL --security-opt no-new-privileges nas-web-terminal:test
-docker build -t nas-web-terminal:0.4.0 .
+docker build -t nas-web-terminal:0.5.0 .
 ```
 
 测试使用隔离 tmux server 和临时 RSA 测试密钥，覆盖错误/缺失 JWT、exp/nbf/iss/aud、身份、Origin/CSRF、重放、真实终端输入输出与 resize、断开与到期后会话存活。测试密钥不进入生产镜像；无环境变量免鉴权开关。
@@ -131,4 +132,25 @@ tmux 会话向上滚动打开只读历史快照，再用滚轮浏览；点击“
 
 历史保留终端已有颜色、粗体、斜体和下划线，支持 16/256 色及 RGB。只解析允许的 SGR 样式，使用 DOM textContent 渲染；不执行 HTML、OSC 链接或终端控制指令，不加载外部图片，样式节点最多 4096 个，超出后保留文字。
 
-这仍是终端快照，不是原始 Markdown。更完整的方案是增加独立 Codex 对话阅读视图：先可靠绑定窗格与 Codex 会话，只读取当前授权会话的原始消息，再安全渲染 Markdown 表格、代码块和链接；终端视图继续处理 SSH、交互菜单与实时输入。暂未实现该模式，不通过猜测终端文本重建 Markdown，也不将整个 Codex 日志目录暴露给网页容器。
+终端历史仍是快照；原始 Markdown 阅读已在 0.5.0 实现，见下一节。
+
+## Codex 对话阅读（0.5.0）
+
+连接 Codex 后向上滚动，或点击“查看历史”，默认打开“Codex 对话”。支持标题、列表、引用、Markdown 表格、代码块、HTTP(S) 链接与复制代码。表格独立横向滚动，普通段落自动排版；用户消息保留原文。顶部可切换“终端历史”，Esc 返回实时终端。普通 shell 默认终端历史，临时 SSH 保持原终端滚动。
+
+“更早消息 / 较新消息”逐页浏览，顶部工具栏固定可见；“刷新对话”回到最新页。每页最多 60 条、384 KiB 公共消息，每次扫描最多 4 MiB 原记录。分页按记录字节位置绑定当前 Codex 会话，未完成 JSON 行等待下次刷新；长表格不按安卓端的 24,000 字符截取。单条超过页容量的极端记录明确提示未显示。仅展示已完成的用户/助手消息，不展示系统指令、推理和工具记录；正在生成的回复完成后刷新可读。旧的题答传输 JSON 转为可读回答。无记录或关联失败明确报错，可切换终端处理启动菜单，不猜测最近项目或其他对话。
+
+读取通过既有固定 SSH 通道，以 NAS 用户运行只读适配器；复用安卓端已验证的进程树/后台端点关联逻辑，读取前后重新核对窗格与会话绑定。切换或断开取消读取、丢弃过期响应。每连接最多一个在途读取、间隔至少 1 秒，全服务最多两个 SSH 读取，18 秒宿主期限/22 秒 SSH 期限。浏览器只保存当前页和分页位置，退出历史即清理；没有新增日志目录挂载、公开下载接口或原始消息日志。
+
+首次部署 0.5.0，先在 NAS 以 yao 安装适配器，再升级容器；不用 sudo，不读取 .env：
+
+```bash
+cd /home/yao/code/nas/apps/web-terminal
+sh deploy/setup-reader.sh
+docker build -t nas-web-terminal:0.5.0 .
+docker compose up -d --no-build
+```
+
+`setup-reader.sh` 依赖 Python 3.9+、tmux 和已配置的 SSH 通道；复制版本化读取器与安卓桥接模块到 `~/.local/share/nas-web-terminal/reader-0.5.0/`（目录 700、文件 600）。不重启 Codex、不发送按键。新版本更新应使用新目录并同步固定 SSH 命令，旧目录可保留用于回滚；部署本版本前重复运行会同步本版本文件。Python 测试：`python3 -m unittest discover -s apps/web-terminal/test -p 'test_*.py'`（仓库根目录执行）。
+
+Markdown 使用锁定版本的 [Marked](https://marked.js.org/using_advanced) 与 [DOMPurify](https://github.com/cure53/DOMPurify)，按其官方建议解析后净化。仅允许正文标签，原始 HTML 显示为文字，不加载远程图片、不执行脚本；只保留 HTTP(S) 链接并使用新窗口与 noopener/noreferrer。复制代码仅由点击触发，Permissions-Policy 为本源开放 clipboard-write，clipboard-read 仍禁用。鉴权、Origin、WS 有效期和其他服务入口不变。

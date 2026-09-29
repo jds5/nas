@@ -1,6 +1,15 @@
 import pty from 'node-pty';
 import { access } from 'node:fs/promises';
 
+export const SSH_ARGS = ['-F', '/dev/null', '-e', 'none',
+      '-i', '/run/host-ssh/key', '-o', 'IdentitiesOnly=yes', '-o', 'BatchMode=yes',
+      '-o', 'StrictHostKeyChecking=yes', '-o', 'UserKnownHostsFile=/run/host-ssh/known_hosts',
+      '-o', 'GlobalKnownHostsFile=/dev/null', '-o', 'HostKeyAlias=nas-web-local',
+      '-o', 'ProxyCommand=/usr/bin/socat STDIO UNIX-CONNECT:/run/host-ssh/transport/ssh.sock',
+      '-o', 'ClearAllForwardings=yes', '-o', 'ForwardAgent=no', '-o', 'ControlMaster=no',
+      '-o', 'ConnectTimeout=8', '-o', 'ServerAliveInterval=5', '-o', 'ServerAliveCountMax=1',
+      'yao@127.0.0.1'];
+
 // Only a fixed NAS endpoint is supported; no client-controlled host, user, key or command.
 export class SSH {
   async exists(ref) {
@@ -9,14 +18,7 @@ export class SSH {
     catch { return false; }
   }
   attach(_ref, size) {
-    return pty.spawn('/usr/bin/ssh', ['-F', '/dev/null', '-tt', '-e', 'none',
-      '-i', '/run/host-ssh/key', '-o', 'IdentitiesOnly=yes', '-o', 'BatchMode=yes',
-      '-o', 'StrictHostKeyChecking=yes', '-o', 'UserKnownHostsFile=/run/host-ssh/known_hosts',
-      '-o', 'GlobalKnownHostsFile=/dev/null', '-o', 'HostKeyAlias=nas-web-local',
-      '-o', 'ProxyCommand=/usr/bin/socat STDIO UNIX-CONNECT:/run/host-ssh/transport/ssh.sock',
-      '-o', 'ClearAllForwardings=yes', '-o', 'ForwardAgent=no', '-o', 'ControlMaster=no',
-      '-o', 'ConnectTimeout=8', '-o', 'ServerAliveInterval=5', '-o', 'ServerAliveCountMax=1',
-      'yao@127.0.0.1'], { name: 'xterm-256color', ...size, cwd: '/tmp',
+    return pty.spawn('/usr/bin/ssh', [...SSH_ARGS.slice(0, -1), '-tt', SSH_ARGS.at(-1)], { name: 'xterm-256color', ...size, cwd: '/tmp',
       env: { PATH: '/usr/bin:/bin', HOME: '/tmp', LANG: 'C.UTF-8', TERM: 'xterm-256color' } });
   }
 }

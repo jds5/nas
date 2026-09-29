@@ -13,7 +13,7 @@
 | [Android 安全诊断](docs/security/ANDROID_APP_SECURITY_REVIEW.md) | 安全审查、会话启动边界、测试证据与剩余风险 |
 | [Android 控制端](apps/android/README.md) | 独立手机 App、构建安装、安全边界与当前限制 |
 | [网页终端安全审查](docs/security/WEB_TERMINAL_SECURITY_REVIEW.md) | 同域风险、NAS 权限边界、撤销与剩余风险 |
-| [NAS 网页终端](apps/web-terminal/README.md) | 整站 Access 保护的 tmux / 临时 SSH 终端、部署与验证 |
+| [NAS 网页终端](apps/web-terminal/README.md) | 整站 Access 保护的 tmux / 临时 SSH、Codex Markdown 对话与部署验证 |
 | [网页终端实施记录](docs/operations/2026-09-29-NAS网页终端.md) | 内部部署、真实 PTY 与浏览器测试、待完成的公网配置 |
 | [手机外网连接与 SSH 配置](docs/operations/手机外网连接与SSH密钥配置.md) | 本机连接信息、手机专用密钥、公网入口与 key-only 步骤 |
 | [手机接入现有 tmux 规划](docs/operations/手机接入现有tmux规划.md) | 当前会话定位、手机接入步骤与远控界面选项 |

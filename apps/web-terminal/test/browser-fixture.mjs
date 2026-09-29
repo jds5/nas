@@ -19,7 +19,16 @@ const token = await new SignJWT({ email: config.emails[0], type: 'app' }).setPro
   .setIssuer(config.issuer).setAudience(config.audience).setSubject('test-browser').setIssuedAt().setExpirationTime('1h').sign(pair.privateKey);
 // Isolated shell double: never mount NAS credentials into this fake-auth fixture.
 const ssh = { exists: async ref => ref?.kind === "ssh" && /^ssh-[a-f0-9]{32}$/.test(ref.id), attach: (_ref, size) => pty.spawn("/bin/sh", [], { ...size, cwd: "/tmp", env: { PATH: "/usr/bin:/bin", TERM: "xterm-256color" } }) };
-const app = createApp({ config, tmux, ssh, uploads: new UploadStore(`${dir}/uploads`, `${dir}/uploads`), keyResolver: createLocalJWKSet({ keys: [{ ...await exportJWK(pair.publicKey), kid: 'browser-test' }] }) });
+const conversation = { read: async ({ before, binding }) => {
+  if (binding && binding !== 'a'.repeat(64)) return { ok: false, error: 'binding changed' };
+  const table = '| ' + Array.from({ length: 14 }, (_, i) => '列' + i).join(' | ') + ' |\n|' + ' --- |'.repeat(14) + '\n| ' + Array.from({ length: 14 }, (_, i) => i === 13 ? 'TABLE_RIGHT_EDGE' : '完整表格内容').join(' | ') + ' |';
+  return { ok: true, binding: 'a'.repeat(64), before: before == null ? 100 : 0, hasOlder: before == null, skipped: false,
+    messages: before == null ? [
+      { id: 'u1', role: 'user', text: '用户输入 **保持原文**' },
+      { id: 'a1', role: 'assistant', phase: 'final_answer', text: '# Markdown 对话\n\n**粗体** 与 *斜体*\n\n' + table + '\n\n```bash\nprintf hello\n```\n\n- 列表项目\n\n[安全链接](https://example.com) [恶意链接](javascript:alert(1)) [本地路径](/etc/passwd)\n\n![远程图片](https://evil.invalid/track.png)\n\n<img src="https://evil.invalid/raw.png" onerror="alert(1)"><script>alert(1)</script>' },
+    ] : [{ id: 'old', role: 'assistant', text: '更早消息 OLD_PAGE' }] };
+} };
+const app = createApp({ config, tmux, ssh, conversation, uploads: new UploadStore(`${dir}/uploads`, `${dir}/uploads`), keyResolver: createLocalJWKSet({ keys: [{ ...await exportJWK(pair.publicKey), kid: 'browser-test' }] }) });
 const assertion = req => { req.headers['cf-access-jwt-assertion'] = token; };
 app.server.prependListener('request', assertion);
 app.server.prependListener('upgrade', assertion);

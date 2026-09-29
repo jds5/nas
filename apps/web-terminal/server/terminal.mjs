@@ -2,8 +2,9 @@ import { WebSocket } from 'ws';
 export const validSize = s => s && Number.isInteger(s.cols) && Number.isInteger(s.rows) && s.cols >= 20 && s.cols <= 400 && s.rows >= 5 && s.rows <= 160;
 
 // Each selection has an epoch. Old output/acks/input cannot cross a session switch.
-export function connectTerminal({ ws, ref, user, tmux, peers, uploads, maxDurationMs }) {
+export function connectTerminal({ ws, ref, user, tmux, peers, uploads, conversation, maxDurationMs }) {
   let term, activeRef = ref, epoch = 0, changing = false, serial = 0;
+  let reading;
   let closed = false, queued = 0, alive = true, submitting = false;
   const deadline = Math.min(user.exp * 1000, Date.now() + maxDurationMs);
   const send = value => { if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(value)); };
@@ -11,7 +12,7 @@ export function connectTerminal({ ws, ref, user, tmux, peers, uploads, maxDurati
   const finish = () => {
     if (closed) return;
     closed = true; serial++; clearTimeout(expiry); clearInterval(heartbeat); clearInterval(modeTimer);
-    peers.delete(ws); killClient();
+    reading?.abort(); peers.delete(ws); killClient();
   };
   const fail = (code, reason) => { finish(); ws.close(code, reason); };
   const expiry = setTimeout(() => fail(4001, 'reauthenticate'), Math.max(0, deadline - Date.now()));
@@ -30,7 +31,7 @@ export function connectTerminal({ ws, ref, user, tmux, peers, uploads, maxDurati
   ws.on('pong', () => { alive = true; });
   ws.on('close', finish); ws.on('error', finish);
   function attach(next, nextEpoch, size) {
-    killClient(); queued = 0; activeRef = next; epoch = nextEpoch;
+    reading?.abort(); killClient(); queued = 0; activeRef = next; epoch = nextEpoch;
     term = tmux.attach(next, size);
     const client = term;
     client.onData(data => {
@@ -68,6 +69,30 @@ export function connectTerminal({ ws, ref, user, tmux, peers, uploads, maxDurati
       if (!closed && client === term && ownEpoch === epoch) send({ type: 'history-error', epoch });
     } finally { historyBusy = false; }
   }
+  let conversationAt = 0;
+  async function readConversation(msg) {
+    const ownEpoch = epoch, client = term, ownRef = activeRef;
+    const respond = value => { if (!closed && client === term && ownEpoch === epoch && !changing && Date.now() < deadline) send({ ...value, type: 'conversation', requestId: msg.requestId, epoch }); };
+    if (typeof msg.requestId !== 'string' || !/^[\w-]{1,64}$/.test(msg.requestId)) return fail(1008, 'invalid_read');
+    if (!conversation || activeRef.kind === 'ssh') return respond({ ok: false, error: '请选择 tmux 中的 Codex 会话' });
+    if (reading) return respond({ ok: false, error: '正在读取，请稍后重试' });
+    if ((msg.before != null && (!Number.isSafeInteger(msg.before) || msg.before < 0 || !/^[a-f0-9]{64}$/.test(msg.binding || ''))) ||
+        (msg.binding != null && !/^[a-f0-9]{64}$/.test(msg.binding))) return fail(1008, 'invalid_read');
+    const controller = new AbortController(); reading = controller;
+    try {
+      await new Promise(resolve => setTimeout(resolve, Math.max(0, 1000 - (Date.now() - conversationAt))));
+      if (closed || client !== term || ownEpoch !== epoch || changing) return;
+      conversationAt = Date.now();
+      const before = await tmux.snapshot(ownRef);
+      if (closed || client !== term || ownEpoch !== epoch || changing) return;
+      if (before?.command !== 'codex') return respond({ ok: false, error: '当前窗格没有运行 Codex，请使用终端历史' });
+      const result = await conversation.read({ ref: ownRef, before: msg.before, binding: msg.binding }, controller.signal);
+      const after = await tmux.snapshot(ownRef);
+      if (!after || after.pane !== before.pane || after.command !== 'codex') throw new Error('changed');
+      respond(result);
+    } catch { respond({ ok: false, error: '读取失败或会话已变化，请刷新；也可切换到终端历史' }); }
+    finally { if (reading === controller) reading = undefined; }
+  }
   async function submitImages(msg) {
     if (submitting || changing || typeof msg.requestId !== 'string' || !/^[\w-]{1,64}$/.test(msg.requestId)) return fail(1008, 'invalid_submission');
     submitting = true; const ownSerial = serial;
@@ -97,6 +122,7 @@ export function connectTerminal({ ws, ref, user, tmux, peers, uploads, maxDurati
       }
       if (changing || submitting) return;
       if (msg.type === 'input' && typeof msg.data === 'string' && Buffer.byteLength(msg.data) <= 16384) term.write(msg.data);
+      else if (msg.type === 'conversation') void readConversation(msg);
       else if (msg.type === 'history') void history();
       else if (msg.type === 'resize' && validSize(msg)) term.resize(msg.cols, msg.rows);
       else if (msg.type === 'submit-images' && uploads) void submitImages(msg);

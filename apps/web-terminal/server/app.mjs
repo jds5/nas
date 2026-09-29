@@ -18,7 +18,7 @@ const files = new Map([
 const headers = {
   'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff',
   'Referrer-Policy': 'no-referrer', 'X-Frame-Options': 'DENY',
-  'Permissions-Policy': 'camera=(), microphone=(), geolocation=(), clipboard-read=(), clipboard-write=()',
+  'Permissions-Policy': 'camera=(), microphone=(), geolocation=(), clipboard-read=(), clipboard-write=(self)',
   'Content-Security-Policy': "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; font-src 'self'; img-src 'self' data: blob:; frame-ancestors 'none'; base-uri 'none'; form-action 'none'",
 };
 function reply(res, code, value) {
@@ -38,7 +38,7 @@ function reject(socket) {
   socket.end('HTTP/1.1 403 Forbidden\r\nConnection: close\r\nCache-Control: no-store\r\nContent-Length: 0\r\n\r\n');
 }
 
-export function createApp({ config, keyResolver, tmux = new Tmux(), uploads, ssh, maxDurationMs = 15 * 60 * 1000 } = {}) {
+export function createApp({ config, keyResolver, tmux = new Tmux(), uploads, ssh, conversation, maxDurationMs = 15 * 60 * 1000 } = {}) {
   tmux = new Terminals(tmux, ssh);
   const authenticate = authorizer(config, keyResolver);
   const tickets = new Map();
@@ -115,7 +115,7 @@ export function createApp({ config, keyResolver, tmux = new Tmux(), uploads, ssh
       if (!await tmux.exists(ticket.ref) || socket.destroyed || peers.size >= 8 || userCount(user.sub) >= 4) return reject(socket);
       wsServer.handleUpgrade(req, socket, head, ws => {
         peers.set(ws, user.sub);
-        connectTerminal({ ws, ref: ticket.ref, user, tmux, peers, uploads, maxDurationMs });
+        connectTerminal({ ws, ref: ticket.ref, user, tmux, peers, uploads, conversation, maxDurationMs });
       });
     } catch { reject(socket); }
     finally { pendingUpgrades--; }

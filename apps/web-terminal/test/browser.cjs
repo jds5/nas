@@ -8,11 +8,11 @@ async function until(check) {
 }
 (async () => {
   fs.mkdirSync('/artifacts', { recursive: true });
-  const browser = await chromium.launch({ headless: true });
+  const browser = await chromium.launch({ headless: true, args: ['--unsafely-treat-insecure-origin-as-secure=http://terminal-fixture:3000'] });
   try {
     for (const [label, viewport] of [['desktop', { width: 1440, height: 900 }], ['large-desktop', { width: 1920, height: 1080 }]]) {
-      const page = await browser.newPage({ viewport });
-      const errors = []; page.on('pageerror', e => errors.push(e.message));
+      const page = await browser.newPage({ viewport, permissions: ['clipboard-read', 'clipboard-write'] });
+      const errors = []; page.on('pageerror', e => { errors.push(e.message); console.error('Page error:', e.message); });
       let output = '', wsCount = 0, ticketRequests = 0, inputCount = 0;
       page.on('request', req => { if (req.url().endsWith('/api/connections')) ticketRequests++; });
       page.on('websocket', ws => {
@@ -66,6 +66,29 @@ async function until(check) {
       await new Promise(r => setTimeout(r, 200));
       const codexInputBeforeWheel = inputCount;
       await page.locator('#terminal').hover(); await page.mouse.wheel(0, -300);
+      await until(async () => await page.locator('#chat-messages h1').count() === 1);
+      assert.equal(await page.locator('#chat-messages h1').textContent(), 'Markdown 对话');
+      assert.equal(await page.locator('#chat-messages strong').textContent(), '粗体');
+      assert.equal(await page.locator('#chat-messages table td').count(), 14);
+      const table = page.locator('.chat-table');
+      assert.ok(await table.evaluate(el => el.scrollWidth > el.clientWidth));
+      await table.evaluate(el => { el.scrollLeft = el.scrollWidth; });
+      assert.ok(await table.evaluate(el => el.scrollLeft > 0));
+      assert.equal(await page.locator('.chat-table td').last().textContent(), 'TABLE_RIGHT_EDGE');
+      assert.equal(await page.locator('#chat-messages pre code').textContent(), 'printf hello\n');
+      assert.equal(await page.locator('.copy-code').count(), 1);
+      await page.locator('.copy-code').click();
+      await until(async () => await page.locator('.copy-code').textContent() === '已复制');
+      assert.equal(await page.locator('#chat-messages img, #chat-messages script, #chat-messages iframe').count(), 0);
+      assert.equal(await page.locator('#chat-messages a').count(), 1);
+      assert.equal(await page.locator('#chat-messages a').getAttribute('rel'), 'noopener noreferrer');
+      assert.ok((await page.locator('.chat-message.user').textContent()).includes('**保持原文**'));
+      await page.screenshot({ path: `/artifacts/${label}-markdown.png` });
+      await page.locator('#chat-older').click();
+      await until(async () => (await page.locator('#chat-messages').textContent()).includes('OLD_PAGE'));
+      await page.locator('#chat-newer').click();
+      await until(async () => await page.locator('#chat-messages table').count() === 1);
+      await page.locator('#history-terminal').click();
       await until(async () => (await page.locator('#history-content').textContent()).includes('网页上传的附件'));
       assert.equal(inputCount, codexInputBeforeWheel, 'Codex wheel must not recall previous prompts');
       await page.locator('#history-close').click();
@@ -144,7 +167,7 @@ async function until(check) {
       await page.locator('#detach').click();
       assert.equal(await page.locator('#notice').textContent(), '临时 SSH 已关闭。');
       await page.close();
-      console.log(`${label}: single-WebSocket switching / drafts / Enter / Ctrl+J / IME / images / clipboard / drop / flow-control / reconnect / read-only history / wheel-no-input / desktop controls PASS`);
+      console.log(`${label}: single-WebSocket switching / drafts / Enter / Ctrl+J / IME / images / clipboard / drop / flow-control / reconnect / read-only history / Markdown / table / pagination / safe links / copy-code / wheel-no-input / desktop controls PASS`);
     }
   } finally { await browser.close(); }
 })().catch(error => { console.error('Browser acceptance failed:', error.stack); process.exit(1); });

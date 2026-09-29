@@ -53,7 +53,7 @@
 - RS256、issuer/audience、exp/nbf、允许邮箱；缺少配置拒绝，所有页面/资源/API/WS 都有鉴权。
 - POST 精确 Origin 与 CSRF header、WS 精确 Origin、30 秒绑定身份的一次性票据、票据消费在异步工作前完成。
 - 目标使用固定二进制/参数数组；SSH 主机/用户/密钥不可由浏览器指定，StrictHostKeyChecking、BatchMode、禁用转发。
-- 历史和名字以 textContent 渲染；没有将其直接放入 innerHTML；上传路径随机、wx 创建，不能用客户端名字决定路径。
+- 终端历史和名字以 textContent 渲染；0.5.0 Codex Markdown 通过 Marked + DOMPurify 标签白名单渲染，不插入未经净化的 HTML；上传路径随机、wx 创建，不能用客户端名字决定路径。
 - 现场 Web 容器 UID 1000、只读根、cap_drop ALL、无公开端口；专用 SSH 目录 700/key 600/传输目录 700，图片目录 700。
 - 生产容器带伪造 assertion 的页面和会话 API 请求均 403。
 - 18 项隔离 Node 测试全部通过，包含鉴权、票据、到期、上传归属、历史读取等；没有向生产会话发键。
@@ -68,3 +68,10 @@
 5. 补齐限频、安全事件审计、图片留存/验证与镜像扫描。
 
 未修改应用代码、服务、防火墙、Access、域名或凭据。本次只新增审查文档及导航。
+
+
+## 0.5.0 对话阅读增量复核（2026-09-29）
+
+原始 Codex 对话通过已有固定、严格验签的本地 SSH 通道读取，未挂载整个 Codex 目录，也不允许客户端指定路径、主机或 thread ID。复用安卓桥接的进程树/后台端点关联；前后核对 tmux 身份和日志绑定，分页绑定同一记录。只输出公共完成消息，排除系统、推理和工具记录；题答信封转为文字。切换/断开取消 SSH 读取，并通过 epoch/requestId 丢弃旧结果。每连接一项读取、至少 1 秒间隔，全服务并发上限 2，读取/输出/时间均有上限。跨身份仍沿用现有 Access 人类邮箱策略，不提供多 Unix 用户隔离。
+
+Markdown 原始 HTML 转义，图片仅文字占位；Marked 输出由 DOMPurify 以固定标签/属性白名单生成 DOM。无 SVG、MathML、表单、脚本、事件属性、style 或 id；链接二次校验为无用户名/密码的 HTTP(S)，禁用本地路径及危险协议，并设 noopener/noreferrer。不自动请求外部资源。用户消息使用 textContent。代码复制需点击，clipboard-write 仅 self，clipboard-read 保持禁用。宿主读取器导入桥接模块，但入口仅执行读取，不开放其输入/按键函数。已有 yao/SSH 的权限边界未缩小，也未宣称其构成沙箱。
