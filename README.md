@@ -7,6 +7,7 @@
 | 文档 | 内容 |
 | --- | --- |
 | [网络安全架构](docs/architecture/家庭NAS网络安全架构.md) | 入口、网络边界、远程维护与待验收事项 |
+| [Immich 视频上传排查](docs/operations/2026-09-29-Immich视频上传排查.md) | 大文件配置、历史日志与待复现原因 |
 | [设备与运维记录](docs/operations/运维记录.md) | 硬件、存储、备份链、NPM/应用修复与版本记录 |
 | [备份盘休眠](docs/operations/备份盘休眠.md) | 磁盘身份、自纠正 cron、监控与待核验效果 |
 | [Android 安全诊断](docs/security/ANDROID_APP_SECURITY_REVIEW.md) | 安全审查、会话启动边界、测试证据与剩余风险 |
