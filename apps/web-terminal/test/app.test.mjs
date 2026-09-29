@@ -213,3 +213,36 @@ test('upload endpoint enforces CSRF; attached Codex receives image path, shell c
     assert.ok(!replies.some(x => x.type === 'submitted'));
   } finally { shell.close(); await once(shell, 'close'); }
 });
+
+test('temporary SSH shares authentication and closes its process on disconnect and expiry', async () => {
+  const pty = (await import('node-pty')).default;
+  let child, killed = false;
+  const ssh = {
+    exists: async ref => ref?.kind === 'ssh' && ref.id === 'ssh-' + 'a'.repeat(32),
+    attach: (_ref, size) => {
+      child = pty.spawn('/bin/sh', [], { ...size, cwd: '/tmp', env: { PATH: '/usr/bin:/bin', TERM: 'xterm-256color' } });
+      child.onExit(() => { killed = true; }); return child;
+    },
+  };
+  const instance = createApp({ config, keyResolver: keys, tmux: new Tmux('/tmp/absent-socket-for-ssh-test'), ssh, maxDurationMs: 500 });
+  instance.server.listen(0, '127.0.0.1'); await once(instance.server, 'listening');
+  const previous = url; url = `http://127.0.0.1:${instance.server.address().port}`;
+  try {
+    const assertion = await token(), ref = { kind: 'ssh', id: 'ssh-' + 'a'.repeat(32), generation: 'ephemeral' };
+    assert.equal((await request('/terminal/manage/api/connections', { payload: ref })).status, 403);
+    assert.equal((await request('/terminal/manage/api/connections', { assertion, payload: ref, origin: 'https://wrong.test' })).status, 403);
+    assert.deepEqual((await (await request('/terminal/manage/api/sessions', { assertion })).json()).sessions, []);
+    for (const expire of [false, true]) {
+      killed = false;
+      const ws = wsConnect(assertion, await reservation(assertion, ref));
+      const closed = once(ws, 'close');
+      await once(ws, 'message');
+      assert.ok(child.pid > 0);
+      if (!expire) ws.close();
+      await closed;
+      for (let i = 0; i < 50 && !killed; i++) await new Promise(r => setTimeout(r, 20));
+      assert.equal(killed, true);
+      assert.throws(() => process.kill(child.pid, 0), { code: 'ESRCH' });
+    }
+  } finally { url = previous; instance.shutdown(); }
+});

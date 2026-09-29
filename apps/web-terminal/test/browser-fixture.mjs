@@ -1,3 +1,4 @@
+import pty from 'node-pty';
 // TEST IMAGE ONLY. Simulates the edge assertion with temporary keys on an isolated Docker network.
 // Never publish this fixture or mount production tmux sockets into it.
 import { generateKeyPair, exportJWK, createLocalJWKSet, SignJWT } from 'jose';
@@ -16,7 +17,9 @@ const pair = await generateKeyPair('RS256');
 const config = { issuer: 'https://test.cloudflareaccess.com', audience: 'browser-test', origin: 'http://terminal-fixture:3000', emails: ['test@example.test'] };
 const token = await new SignJWT({ email: config.emails[0], type: 'app' }).setProtectedHeader({ alg: 'RS256', kid: 'browser-test' })
   .setIssuer(config.issuer).setAudience(config.audience).setSubject('test-browser').setIssuedAt().setExpirationTime('1h').sign(pair.privateKey);
-const app = createApp({ config, tmux, uploads: new UploadStore(`${dir}/uploads`, `${dir}/uploads`), keyResolver: createLocalJWKSet({ keys: [{ ...await exportJWK(pair.publicKey), kid: 'browser-test' }] }) });
+// Isolated shell double: never mount NAS credentials into this fake-auth fixture.
+const ssh = { exists: async ref => ref?.kind === "ssh" && /^ssh-[a-f0-9]{32}$/.test(ref.id), attach: (_ref, size) => pty.spawn("/bin/sh", [], { ...size, cwd: "/tmp", env: { PATH: "/usr/bin:/bin", TERM: "xterm-256color" } }) };
+const app = createApp({ config, tmux, ssh, uploads: new UploadStore(`${dir}/uploads`, `${dir}/uploads`), keyResolver: createLocalJWKSet({ keys: [{ ...await exportJWK(pair.publicKey), kid: 'browser-test' }] }) });
 const assertion = req => { req.headers['cf-access-jwt-assertion'] = token; };
 app.server.prependListener('request', assertion);
 app.server.prependListener('upgrade', assertion);

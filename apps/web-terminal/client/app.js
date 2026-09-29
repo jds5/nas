@@ -13,6 +13,7 @@ const drafts = new Map();
 const maxBytes = 20 * 1024 * 1024;
 let opened = false, socket, selected, connecting = false, ready = false, revision = 0, epoch = 0;
 let sessions = [], switchQueued, composing = false, frameScheduled = false, lastSize = '';
+let terminalMode = true, manualComposer = false;
 let pendingAck = 0, ackTimer, submission;
 const key = ref => ref && `${ref.id}|${ref.generation}`;
 function draft(ref = selected) {
@@ -30,6 +31,15 @@ function updateState(text) {
   $('attach').disabled = !active || Boolean(submission) || d.files.length >= 4;
   $('draft').disabled = Boolean(submission);
   $('reconnect').hidden = !selected || active || connecting;
+}
+function focusInput() { if ($('composer').hidden) term.focus(); else $('draft').focus(); }
+function setMode(mode) {
+  terminalMode = mode !== 'codex';
+  $('composer').hidden = terminalMode && !manualComposer;
+  $('attach').hidden = terminalMode;
+  $('toggle-composer').textContent = $('composer').hidden ? '展开输入框' : '收起输入框';
+  $('hint').textContent = selected?.kind === 'ssh' ? '临时 SSH：断开、切换或连接到期会关闭登录 shell；重新连接会新建。' : terminalMode ? '直接在终端输入；支持 Tab、方向键、Ctrl+C 和全屏程序。' : 'Enter 发送 · Ctrl+J 换行；点击终端操作 Codex 菜单。';
+  resize();
 }
 function sendFrame(frame) { if (socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ ...frame, epoch })); }
 function size() {
@@ -94,13 +104,13 @@ function detach() {
 function select(session) {
   if (selected) draft().text = $('draft').value;
   else if ($('draft').value) draft(session).text = $('draft').value;
-  selected = session; $('draft').value = draft().text; $('session-name').textContent = session.name;
+  selected = session; manualComposer = false; setMode('terminal'); $('draft').value = draft().text; $('session-name').textContent = session.name;
   renderSessions(); renderAttachments();
 }
 async function connect(session) {
   if (submission) { notify('正在确认发送结果，请稍后切换会话。'); return; }
   if (connecting && socket?.readyState === WebSocket.OPEN) { switchQueued = session; return; }
-  if (connected() && key(selected) === key(session)) { $('draft').focus(); return; }
+  if (connected() && key(selected) === key(session)) { focusInput(); return; }
   if (connected()) {
     select(session); connecting = true; ready = false; clearAck(); epoch++; term.reset();
     const s = size(); lastSize = `${s.cols}x${s.rows}`;
@@ -110,7 +120,7 @@ async function connect(session) {
   const current = revision; updateState('连接中…'); notify();
   const s = size(); lastSize = `${s.cols}x${s.rows}`; term.reset();
   try {
-    const { ticket } = await api('/terminal/manage/api/connections', { id: session.id, generation: session.generation, ...s });
+    const { ticket } = await api('/terminal/manage/api/connections', { kind: session.kind, id: session.id, generation: session.generation, ...s });
     if (current !== revision) return;
     const url = new URL('/terminal/manage/ws', location.href); url.protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
     const ws = new WebSocket(url, ['nas-terminal.v1', `ticket.${ticket}`]); socket = ws;
@@ -119,9 +129,12 @@ async function connect(session) {
       const msg = JSON.parse(event.data);
       if (msg.epoch !== epoch) return;
       if (msg.type === 'ready') {
-        ready = true; connecting = false; updateState('已连接'); $('draft').focus(); resize();
+        ready = true; connecting = false; updateState('已连接'); focusInput(); resize();
         const next = switchQueued; switchQueued = undefined;
         if (next) connect(next);
+      } else if (msg.type === 'mode') {
+        const hadFocus = document.activeElement === $('draft') || document.activeElement?.classList.contains('xterm-helper-textarea');
+        setMode(msg.mode); if (hadFocus) focusInput();
       } else if (msg.type === 'output') {
         const forEpoch = epoch;
         term.write(msg.data, () => ack(ws, forEpoch, encoder.encode(msg.data).length));
@@ -134,7 +147,7 @@ async function connect(session) {
     ws.onclose = event => {
       if (socket !== ws) return;
       detach();
-      notify(event.code === 4001 ? '连接到期或会话已变化，请重新连接。后台任务继续运行。' : '连接已断开，草稿已保留；后台任务继续运行。若刚发送消息，请先核对终端再重发。');
+      notify(selected?.kind === 'ssh' ? '临时 SSH 已关闭；重新连接将新建 shell。' : event.code === 4001 ? '连接到期或会话已变化，请重新连接。后台任务继续运行。' : '连接已断开，草稿已保留；后台任务继续运行。若刚发送消息，请先核对终端再重发。');
     };
     ws.onerror = () => { if (socket === ws) notify('无法连接，请重试或刷新页面重新登录。'); };
   } catch (e) { if (current === revision) { connecting = false; updateState('连接失败'); notify(e.message); } }
@@ -197,6 +210,7 @@ function upload(item, target) {
 }
 function addFiles(files) {
   if (!connected() || submission) { notify('请先连接会话。'); return; }
+  if (terminalMode) { notify('图片仅支持 tmux 中前台运行的 Codex。'); return; }
   const d = draft(), picked = [...files];
   if (!picked.length) return;
   if (d.files.length + picked.length > 4 || picked.some(f => !['image/png', 'image/jpeg', 'image/webp'].includes(f.type) || f.size === 0) ||
@@ -206,8 +220,10 @@ function addFiles(files) {
   for (const file of picked) { const item = { file, preview: URL.createObjectURL(file), uploading: true, progress: 0 }; d.files.push(item); upload(item, selected); }
   renderAttachments();
 }
+$('new-ssh').onclick = () => connect({ kind: 'ssh', id: 'ssh-' + [...crypto.getRandomValues(new Uint8Array(16))].map(x => x.toString(16).padStart(2, '0')).join(''), generation: 'ephemeral', name: '临时 SSH · NAS' });
+$('toggle-composer').onclick = () => { manualComposer = $('composer').hidden; if (!terminalMode) { $('composer').hidden = !$('composer').hidden; $('toggle-composer').textContent = $('composer').hidden ? '展开输入框' : '收起输入框'; resize(); } else setMode('terminal'); focusInput(); };
 $('refresh').onclick = refresh;
-$('detach').onclick = () => { detach(); notify('已断开，草稿保留，后台任务继续运行。'); };
+$('detach').onclick = () => { detach(); notify(selected?.kind === 'ssh' ? '临时 SSH 已关闭。' : '已断开，草稿保留，tmux 任务继续运行。'); };
 $('reconnect').onclick = () => selected && connect(selected);
 $('composer').onsubmit = event => { event.preventDefault(); submit(); };
 $('draft').oninput = () => { draft().text = $('draft').value; };
@@ -233,4 +249,4 @@ $('fullscreen').onclick = async () => {
 };
 new ResizeObserver(resize).observe($('terminal-wrap'));
 window.addEventListener('pagehide', detach);
-updateState('尚未连接'); refresh();
+setMode('terminal'); updateState('尚未连接'); refresh();

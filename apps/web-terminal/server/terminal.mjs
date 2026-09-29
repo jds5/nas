@@ -10,12 +10,23 @@ export function connectTerminal({ ws, ref, user, tmux, peers, uploads, maxDurati
   const killClient = () => { const old = term; term = null; try { old?.kill(); } catch {} };
   const finish = () => {
     if (closed) return;
-    closed = true; serial++; clearTimeout(expiry); clearInterval(heartbeat);
+    closed = true; serial++; clearTimeout(expiry); clearInterval(heartbeat); clearInterval(modeTimer);
     peers.delete(ws); killClient();
   };
   const fail = (code, reason) => { finish(); ws.close(code, reason); };
   const expiry = setTimeout(() => fail(4001, 'reauthenticate'), Math.max(0, deadline - Date.now()));
-  const heartbeat = setInterval(() => { if (!alive) return ws.terminate(); alive = false; ws.ping(); }, 30000);
+  let modeBusy = false, lastMode;
+  async function reportMode() {
+    if (modeBusy || closed || changing) return;
+    modeBusy = true; const client = term;
+    try {
+      const snapshot = await tmux.snapshot(activeRef);
+      const mode = snapshot?.command === 'codex' ? 'codex' : 'terminal';
+      if (!closed && client === term && mode !== lastMode) { lastMode = mode; send({ type: 'mode', mode, epoch }); }
+    } finally { modeBusy = false; }
+  }
+  const modeTimer = setInterval(() => void reportMode(), 1500);
+  const heartbeat = setInterval(() => { if (!alive) return ws.terminate(); alive = false; ws.ping(); }, 5000);
   ws.on('pong', () => { alive = true; });
   ws.on('close', finish); ws.on('error', finish);
   function attach(next, nextEpoch, size) {
@@ -30,7 +41,7 @@ export function connectTerminal({ ws, ref, user, tmux, peers, uploads, maxDurati
       if (queued > 256 * 1024) client.pause();
     });
     client.onExit(() => { if (client === term) fail(1000, 'detached'); });
-    changing = false;
+    changing = false; lastMode = undefined; void reportMode();
     send({ type: 'ready', epoch, expires: deadline });
   }
   async function switchTo(msg) {

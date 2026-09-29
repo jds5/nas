@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { WebSocketServer } from 'ws';
 import { connectTerminal, validSize } from './terminal.mjs';
 import { authorizer } from './auth.mjs';
+import { Terminals } from './ssh.mjs';
 import { Tmux } from './tmux.mjs';
 
 const staticRoot = fileURLToPath(new URL('../public/', import.meta.url));
@@ -37,7 +38,8 @@ function reject(socket) {
   socket.end('HTTP/1.1 403 Forbidden\r\nConnection: close\r\nCache-Control: no-store\r\nContent-Length: 0\r\n\r\n');
 }
 
-export function createApp({ config, keyResolver, tmux = new Tmux(), uploads, maxDurationMs = 15 * 60 * 1000 } = {}) {
+export function createApp({ config, keyResolver, tmux = new Tmux(), uploads, ssh, maxDurationMs = 15 * 60 * 1000 } = {}) {
+  tmux = new Terminals(tmux, ssh);
   const authenticate = authorizer(config, keyResolver);
   const tickets = new Map();
   const peers = new Map();
@@ -62,7 +64,7 @@ export function createApp({ config, keyResolver, tmux = new Tmux(), uploads, max
         }
         if (req.url === '/terminal/manage/api/sessions') {
           const sessions = await tmux.list();
-          return reply(res, 200, req.method === 'HEAD' ? undefined : { sessions });
+          return reply(res, 200, req.method === 'HEAD' ? undefined : { sessions, sshAvailable: Boolean(ssh) });
         }
         return reply(res, 404, { error: '页面不存在' });
       }
@@ -84,7 +86,7 @@ export function createApp({ config, keyResolver, tmux = new Tmux(), uploads, max
         return reply(res, 429, { error: '连接过多，请关闭其他连接后重试' });
       }
       const ticket = randomBytes(32).toString('base64url');
-      tickets.set(ticket, { ref: { id: ref.id, generation: ref.generation, ...(validSize(ref) ? { cols: ref.cols, rows: ref.rows } : {}) }, sub: user.sub, expires: Date.now() + 30000 });
+      tickets.set(ticket, { ref: { kind: ref.kind, id: ref.id, generation: ref.generation, ...(validSize(ref) ? { cols: ref.cols, rows: ref.rows } : {}) }, sub: user.sub, expires: Date.now() + 30000 });
       return reply(res, 201, { ticket });
     } catch (err) {
       if (err.publicMessage) return reply(res, err.status, { error: err.publicMessage });

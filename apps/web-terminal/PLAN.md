@@ -36,3 +36,9 @@
 - `/terminal/manage/ws` 新增 `submit-images`：图片绑定验签身份、session generation 和 pane ID。核对当前前台 Codex 后提交图片路径说明，拒绝非 Codex 及 `/`、`!` 命令混发；确认超时保留草稿，不自动重发。
 - 前端新增文件选择、拖放、剪贴板上传，图片预览使用浏览器本地 blob URL；各会话保留独立草稿。Enter 发送、Ctrl+J 换行，输入法确认不发送。移除移动端按键栏，默认输入高度 156 px。
 - 性能基线（本机 15 次只读采样）：list 中位 38.8 ms；exists 中位 41.0 ms、最大 53.6 ms。连接中的全列表检查改为单目标检查，切换复用 WebSocket，初始尺寸在连接时传入，ACK 合并至 32 KiB/40 ms，尺寸通知按帧去重。不修改 tmux window-size 策略。
+
+## 0.3：PC 原生终端与临时 SSH
+
+普通 tmux 窗格默认收起消息框并聚焦 xterm，保留完整终端键盘语义；每 1.5 秒查询当前前台程序，Codex 才自动显示消息框，手动展开仍支持 shell 文本输入。临时 SSH 按钮独立于 tmux 列表，新建真实 NAS SSH 登录，切换/断开销毁此连接，不创建 tmux、不恢复上一 shell。
+
+沿用所有 Access、Origin、单次票据和连接配额。目标固定为 NAS 当前用户，不接受客户端提供 SSH 地址或命令。使用独立 Ed25519 密钥、固定主机公钥，authorized_keys 限制来源 loopback、禁止转发并允许 PTY。容器通过仅 UID 1000 可访问的 Unix socket，由独立 socat 转接容器转发到 127.0.0.1:22；不修改防火墙或发布端口。Web 专用目录只读挂载；转接容器使用 host 网络仅访问 loopback SSH，仅监听 Unix socket，挂载 transport 子目录，无密钥权限，不监听 TCP。此特定传输用途不增加公网入口。专用密钥，既有 SSH 密钥及 .env 不读取。关闭 WS 杀 SSH client，服务器以标准 SSH 挂断语义关闭 shell；网络消失由 5 秒心跳检测（通常 10 秒内），15 分钟鉴权上限仍有效；nohup/disown/自行启动的 tmux 不承诺随断线关闭。

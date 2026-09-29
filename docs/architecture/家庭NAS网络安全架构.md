@@ -51,7 +51,7 @@ Access JWT 保护管理请求，不能保护没有 JWT 的公开 GET 不绕过 C
 
 ## 容器与管理网络
 
-2026-09-29 用户明确授权开发整站 Access 保护的独立网页终端，作为远程管理入口的特定例外。目标 `https://rokano.org/terminal`（用户要求共享现有域名，覆盖裸路径与完整子树）：独立 Access Application/Audience、精确允许邮箱、全路径服务端 JWT 校验、Origin/短期票据保护 WebSocket，复用现有 Worker，经 NPM 终端路径转发进入独立 `nas-terminal-front` 网络，应用独立验签。它具有宿主 tmux 用户权限，不是普通只读页面。当前 NPM 路由及网络已配置，终端环境由 Docker 加载；Access/Worker 公网链路及真实登录尚待验收，不改变其他管理面默认仅 LAN 的约定。实现与回滚见 [网页终端](../../apps/web-terminal/README.md)。
+2026-09-29 用户明确授权开发整站 Access 保护的独立网页终端，作为远程管理入口的特定例外。目标 `https://rokano.org/terminal`（用户要求共享现有域名，覆盖裸路径与完整子树）：独立 Access Application/Audience、精确允许邮箱、全路径服务端 JWT 校验、Origin/短期票据保护 WebSocket，复用现有 Worker，经 NPM 终端路径转发进入独立 `nas-terminal-front` 网络，应用独立验签。它具有宿主 tmux 用户权限，不是普通只读页面。0.3.0 增加固定 yao 用户的临时 SSH，使用独立受限密钥和固定主机公钥，经私有 Unix socket 转接 NAS loopback SSH；转接容器使用 host 网络但不监听 TCP，Web 容器仍在独立 bridge，无新增公网端口或防火墙放行。当前 NPM 路由及网络已配置，终端环境由 Docker 加载；Access/Worker 公网链路及真实登录尚待验收，不改变其他管理面默认仅 LAN 的约定。实现与回滚见 [网页终端](../../apps/web-terminal/README.md)。
 
 - front 网络只包含 NPM 与对应应用入口；数据库、Redis 与内部任务不与 NPM 同网。应用端口默认不发布到宿主机。
 - 分别限制应用到宿主机、LAN、其他应用与 `npm:81` 的访问，允许必要 DNS、HTTPS/JWKS 和明确业务依赖。不能用 DNS 名解析失败代替 IP/端口可达性测试。

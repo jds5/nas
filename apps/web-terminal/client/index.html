@@ -16,18 +16,19 @@
   <main>
     <aside id="sidebar">
       <div class="section-heading"><h1>会话</h1><button id="refresh" class="quiet">刷新</button></div>
+      <button id="new-ssh" class="session"><strong>＋ 临时 SSH</strong><span>新建 shell · 断开即关闭</span></button>
       <p class="intro">接回正在运行的工作。</p>
       <div id="sessions" aria-label="tmux 会话列表"></div>
       <p id="list-status" class="muted" role="status">正在读取会话…</p>
-      <p class="aside-note">断开连接后，任务仍会继续运行。</p>
+      <p class="aside-note">tmux 会话断开后继续运行；临时 SSH 断开后关闭。</p>
     </aside>
     <section class="workspace" aria-label="终端工作区">
       <div class="terminal-heading">
         <div><span id="connection-dot" class="dot idle"></span><strong id="session-name">选择一个会话</strong><span id="state">尚未连接</span></div>
-        <div class="actions"><button id="reconnect" hidden>重新连接</button><button id="detach" disabled>断开</button><button id="fullscreen" title="全屏终端" aria-label="全屏终端">⛶</button></div>
+        <div class="actions"><button id="toggle-composer">展开输入框</button><button id="reconnect" hidden>重新连接</button><button id="detach" disabled>断开</button><button id="fullscreen" title="全屏终端" aria-label="全屏终端">⛶</button></div>
       </div>
       <div id="notice" role="status" hidden></div>
-      <div id="terminal-wrap"><div id="empty"><span class="empty-icon">&gt;_</span><h2>你的工作，一直都在。</h2><p>从会话列表选择，继续操作 NAS。<br>支持 Codex、命令行与启动确认界面。</p></div><div id="terminal" hidden></div></div>
+      <div id="terminal-wrap"><div id="empty"><span class="empty-icon">&gt;_</span><h2>你的工作，一直都在。</h2><p>选择 tmux 会话，或新建临时 SSH。<br>支持 Codex、命令行与启动确认界面。</p></div><div id="terminal" hidden></div></div>
       <form id="composer" autocomplete="off">
         <div id="attachments" aria-label="待发送图片"></div>
         <label for="draft" class="sr-only">消息输入</label>

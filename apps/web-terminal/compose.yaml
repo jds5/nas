@@ -2,8 +2,9 @@ name: nas-terminal
 services:
   web:
     build: .
-    image: nas-web-terminal:0.2.0
+    image: nas-web-terminal:0.3.0
     container_name: nas_web_terminal
+    depends_on: [ssh-transport]
     restart: unless-stopped
     init: true
     user: "${NAS_UID:-1000}:${NAS_GID:-1000}"
@@ -24,6 +25,12 @@ services:
         target: /uploads
         bind:
           create_host_path: false
+      - type: bind
+        source: /home/yao/.nas-web-ssh
+        target: /run/host-ssh
+        read_only: true
+        bind:
+          create_host_path: false
     read_only: true
     tmpfs:
       - /tmp:size=32m,mode=1777
@@ -40,6 +47,35 @@ services:
     networks:
       front:
         aliases: [nas-web-terminal]
+  ssh-transport:
+    image: nas-web-terminal:0.3.0
+    container_name: nas_web_ssh_transport
+    restart: unless-stopped
+    init: true
+    user: "${NAS_UID:-1000}:${NAS_GID:-1000}"
+    network_mode: host
+    entrypoint: /usr/bin/socat
+    command: ["UNIX-LISTEN:/transport/ssh.sock,fork,unlink-early,mode=600", "TCP:127.0.0.1:22"]
+    volumes:
+      - type: bind
+        source: /home/yao/.nas-web-ssh/transport
+        target: /transport
+        bind:
+          create_host_path: false
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 32
+    mem_limit: 32m
+    cpus: 0.25
+    healthcheck:
+      test: ["CMD", "test", "-S", "/transport/ssh.sock"]
+      interval: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: 1m
+        max-file: "2"
 networks:
   front:
     name: nas-terminal-front

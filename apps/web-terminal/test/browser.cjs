@@ -27,6 +27,11 @@ async function until(check) {
       await page.goto('http://terminal-fixture:3000/terminal');
       await choose('demo-project');
       assert.equal(await page.locator('.keyboard-bar, #paste, #keyboard').count(), 0);
+      assert.equal(await page.locator('#composer').isHidden(), true);
+      await page.locator('.xterm-helper-textarea').pressSequentially('printf RAW_TERMINAL_OK');
+      await page.locator('.xterm-helper-textarea').press('Enter');
+      await until(() => output.includes('RAW_TERMINAL_OK'));
+      await page.locator('#toggle-composer').click();
       assert.ok((await page.locator('#draft').boundingBox()).height >= 156);
       const marker = `${label}_${Date.now()}`;
       await page.locator('#draft').fill(`printf 'KEY_%s_OK\\n' '${marker}'`);
@@ -38,10 +43,10 @@ async function until(check) {
       const beforeIME = inputCount;
       await page.locator('#draft').evaluate(el => el.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', isComposing: true, keyCode: 229, bubbles: true })));
       assert.equal(await page.locator('#draft').inputValue(), '草稿A\nB'); assert.equal(inputCount, beforeIME);
-      await choose('中文测试'); await page.locator('#draft').fill('另一个草稿');
-      await choose('demo-project'); assert.equal(await page.locator('#draft').inputValue(), '草稿A\nB');
+      await choose('中文测试'); await page.locator('#toggle-composer').click(); await page.locator('#draft').fill('另一个草稿');
+      await choose('demo-project'); await page.locator('#toggle-composer').click(); assert.equal(await page.locator('#draft').inputValue(), '草稿A\nB');
       assert.equal(wsCount, 1); assert.equal(ticketRequests, 1);
-      await choose('codex-images');
+      await choose('codex-images'); await until(async () => await page.locator('#composer').isVisible());
       await page.locator('#image-files').setInputFiles({ name: '截图.png', mimeType: 'image/png', buffer: Buffer.concat([png, Buffer.alloc(2 * 1024 * 1024)]) });
       await until(async () => (await page.locator('#attachments').textContent()).includes('已上传'));
       assert.equal(await page.locator('#attachments img').evaluate(img => img.naturalWidth > 0), true);
@@ -59,7 +64,7 @@ async function until(check) {
         await until(async () => (await page.locator('#attachments').textContent()).includes('已上传'));
         await page.getByRole('button', { name: '移除', exact: true }).click();
       }
-      await choose('demo-project'); await page.locator('#draft').fill("seq 1 60000; printf 'FLOW_%s_OK\\n' 'END'");
+      await choose('demo-project'); await page.locator('#toggle-composer').click(); await page.locator('#draft').fill("seq 1 60000; printf 'FLOW_%s_OK\\n' 'END'");
       await page.locator('#draft').press('Enter');
       await until(() => output.includes('FLOW_END_OK'));
       assert.equal(await page.locator('#state').textContent(), '已连接');
@@ -68,6 +73,14 @@ async function until(check) {
       await until(async () => await page.locator('#state').textContent() === '已连接');
       assert.equal(wsCount, 2); assert.deepEqual(errors, []);
       await page.screenshot({ path: `/artifacts/${label}-terminal.png` });
+      await page.locator('#new-ssh').click();
+      await until(async () => await page.locator('#state').textContent() === '已连接' && await page.locator('#session-name').textContent() === '临时 SSH · NAS');
+      assert.equal(await page.locator('#composer').isHidden(), true);
+      await page.locator('.xterm-helper-textarea').pressSequentially(`printf 'SSH_%s_OK\\n' '${marker}'`);
+      await page.locator('.xterm-helper-textarea').press('Enter');
+      await until(() => output.includes(`SSH_${marker}_OK`));
+      await page.locator('#detach').click();
+      assert.equal(await page.locator('#notice').textContent(), '临时 SSH 已关闭。');
       await page.close();
       console.log(`${label}: single-WebSocket switching / drafts / Enter / Ctrl+J / IME / images / clipboard / drop / flow-control / reconnect PASS`);
     }
