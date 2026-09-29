@@ -2,6 +2,7 @@ import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
 import './style.css';
+import { renderHistory } from './history.mjs';
 const $ = id => document.getElementById(id);
 function preference(name, fallback) { try { return localStorage.getItem(name) ?? fallback; } catch { return fallback; } }
 function savePreference(name, value) { try { localStorage.setItem(name, String(value)); } catch {} }
@@ -81,10 +82,19 @@ function closeHistory(focus = true) {
 }
 function openHistory() {
   if (!connected() || historyOpen) return;
+  $('history-content').scrollLeft = 0;
   historyOpen = true; $('history').hidden = false; $('history-content').textContent = '正在读取历史…'; $('history-content').focus();
   sendFrame({ type: 'history' });
   historyTimer = setTimeout(() => { if (historyOpen) $('history-content').textContent = '读取超时，请返回实时终端后重试。'; }, 5000);
 }
+$('history-wrap').onclick = () => {
+  const wrapped = $('history-content').classList.toggle('wrap-lines');
+  $('history-wrap').setAttribute('aria-pressed', String(wrapped));
+  $('history-wrap').textContent = wrapped ? '自动换行：开' : '自动换行：关';
+};
+$('history-content').addEventListener('wheel', event => {
+  if (event.shiftKey && event.deltaY && !event.deltaX) { event.preventDefault(); $('history-content').scrollLeft += event.deltaY; }
+}, { passive: false });
 $('history-close').onclick = () => closeHistory();
 $('history').onkeydown = event => { if (event.key === 'Escape') { event.preventDefault(); closeHistory(); } };
 term.attachCustomWheelEventHandler(event => {
@@ -194,7 +204,8 @@ async function connect(session) {
       } else if (msg.type === 'history' || msg.type === 'history-error') {
         if (!historyOpen) return;
         clearTimeout(historyTimer);
-        $('history-content').textContent = msg.type === 'history' ? msg.data : '历史读取失败，请返回实时终端后重试。';
+        renderHistory($('history-content'), msg.type === 'history' ? msg.data : '历史读取失败，请返回实时终端后重试。');
+        $('history-content').scrollLeft = 0;
         $('history-content').scrollTop = Math.max(0, $('history-content').scrollHeight - $('history-content').clientHeight - 120);
       } else if (msg.type === 'output') {
         const forEpoch = epoch;

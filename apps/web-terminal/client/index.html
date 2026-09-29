@@ -29,7 +29,7 @@
         <div class="actions"><button id="font-down" aria-label="缩小终端字号">A−</button><span id="font-size">16</span><button id="font-up" aria-label="增大终端字号">A＋</button><button id="toggle-composer">展开输入框</button><button id="reconnect" hidden>重新连接</button><button id="detach" disabled>断开</button><button id="fullscreen" title="全屏终端" aria-label="全屏终端">⛶</button></div>
       </div>
       <div id="notice" role="status" hidden></div>
-      <div id="terminal-wrap"><section id="history" hidden aria-label="只读终端历史"><div class="history-heading"><span>终端历史快照 · 最近最多 1000 行及当前屏幕</span><button id="history-close">返回实时终端 · Esc</button></div><pre id="history-content" tabindex="0"></pre></section><div id="empty"><span class="empty-icon">&gt;_</span><h2>你的工作，一直都在。</h2><p>选择 tmux 会话，或新建临时 SSH。<br>支持 Codex、命令行与启动确认界面。</p></div><div id="terminal" hidden></div></div>
+      <div id="terminal-wrap"><section id="history" hidden aria-label="只读终端历史"><div class="history-heading"><span>终端历史快照 · 最近最多 1000 行及当前屏幕</span><div class="history-controls"><button id="history-wrap" aria-pressed="false">自动换行：关</button><button id="history-close">返回实时终端 · Esc</button></div></div><div class="history-tip">表格保留原始排版；Shift＋滚轮或底部滚动条横向查看。</div><pre id="history-content" tabindex="0"></pre></section><div id="empty"><span class="empty-icon">&gt;_</span><h2>你的工作，一直都在。</h2><p>选择 tmux 会话，或新建临时 SSH。<br>支持 Codex、命令行与启动确认界面。</p></div><div id="terminal" hidden></div></div>
       <form id="composer" autocomplete="off">
         <div class="input-label"><strong>消息输入</strong><span>文字与图片发送到当前会话</span></div>
         <div id="attachments" aria-label="待发送图片"></div>

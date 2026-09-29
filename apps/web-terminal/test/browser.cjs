@@ -89,6 +89,35 @@ async function until(check) {
       const historyTop = await page.locator('#history-content').evaluate(el => el.scrollTop);
       await page.locator('#history-content').hover(); await page.mouse.wheel(0, -400);
       await until(async () => await page.locator('#history-content').evaluate(el => el.scrollTop) < historyTop);
+      // Actual colored, soft-wrapped output from the isolated tmux fixture.
+      await page.locator('#history-close').click();
+      await page.locator('#draft').fill("printf '\\033[1;31mSTYLE_%s\\033[0m\\n' 'OK'; printf '<img src=x onerror=alert(1)>\\n'; printf 'TABLE_START'; i=0; while [ $i -lt 500 ]; do printf 'x'; i=$((i+1)); done; printf 'RIGHT_%s\\n' 'EDGE'");
+      await page.locator('#draft').press('Enter');
+      await until(() => output.includes('RIGHT_EDGE'));
+      await new Promise(r => setTimeout(r, 200));
+      const beforeStyledHistory = inputCount;
+      await page.locator('#terminal').hover(); await page.mouse.wheel(0, -500);
+      await until(async () => (await page.locator('#history-content').textContent()).includes('RIGHT_EDGE'));
+      assert.equal(inputCount, beforeStyledHistory);
+      const historyText = await page.locator('#history-content').textContent();
+      assert.ok(historyText.includes('TABLE_START' + 'x'.repeat(500) + 'RIGHT_EDGE'), 'tmux soft wraps must be joined');
+      const styled = page.locator('#history-content span').filter({ hasText: /^STYLE_OK/ }).last();
+      assert.equal(await styled.evaluate(el => getComputedStyle(el).fontWeight), '700');
+      assert.notEqual(await styled.evaluate(el => getComputedStyle(el).color), await page.locator('#history-content').evaluate(el => getComputedStyle(el).color));
+      assert.equal(await page.locator('#history-content img').count(), 0);
+      assert.ok(historyText.includes('<img src=x onerror=alert(1)>'));
+      await page.locator('#history-content').evaluate(el => { el.scrollTop = el.scrollHeight; });
+      await page.screenshot({ path: `/artifacts/${label}-history.png` });
+      assert.equal(await page.locator('#history-content').evaluate(el => getComputedStyle(el).whiteSpace), 'pre');
+      assert.ok(await page.locator('#history-content').evaluate(el => el.scrollWidth > el.clientWidth));
+      await page.locator('#history-content').dispatchEvent('wheel', { shiftKey: true, deltaY: 200 });
+      assert.ok(await page.locator('#history-content').evaluate(el => el.scrollLeft > 0));
+      await page.locator('#history-content').evaluate(el => { el.scrollLeft = el.scrollWidth; });
+      assert.ok(await page.locator('#history-content').evaluate(el => el.scrollLeft > 0));
+      await page.locator('#history-wrap').click();
+      assert.equal(await page.locator('#history-content').evaluate(el => getComputedStyle(el).whiteSpace), 'pre-wrap');
+      assert.equal(await page.locator('#history-content').textContent(), historyText);
+      await page.locator('#history-wrap').click();
       await page.locator('#history-content').press('Escape'); assert.equal(await page.locator('#history').isHidden(), true);
 
       assert.equal(await page.locator('#state').textContent(), '已连接');

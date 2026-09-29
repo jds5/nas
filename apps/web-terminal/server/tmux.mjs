@@ -47,7 +47,7 @@ export class Tmux {
   async history(ref) {
     const before = await this.snapshot(ref);
     if (!before) throw new Error('session_unavailable');
-    const text = await this.command(['capture-pane', '-p', '-t', before.pane, '-S', '-1000']);
+    const text = await this.command(['capture-pane', '-p', '-e', '-J', '-t', before.pane, '-S', '-1000']);
     const after = await this.snapshot(ref);
     if (!after || after.pane !== before.pane) throw new Error('session_changed');
     return text;
