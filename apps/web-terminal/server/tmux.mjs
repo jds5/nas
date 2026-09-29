@@ -8,7 +8,7 @@ export class Tmux {
   constructor(socket = '/run/host-tmux/default') { this.socket = socket; }
   async command(args) {
     const { stdout } = await exec('/usr/bin/tmux', ['-S', this.socket, ...args], {
-      timeout: 3000, maxBuffer: 256 * 1024, env: { PATH: '/usr/bin:/bin', LANG: 'C.UTF-8' },
+      timeout: 3000, maxBuffer: 1024 * 1024, env: { PATH: '/usr/bin:/bin', LANG: 'C.UTF-8' },
     });
     return stdout.trimEnd();
   }
@@ -43,6 +43,14 @@ export class Tmux {
           ref.generation !== `${info.dev}:${info.ino}:${info.birthtimeMs}:${pid}:${created}`) return false;
       return { pane, command };
     } catch { return false; }
+  }
+  async history(ref) {
+    const before = await this.snapshot(ref);
+    if (!before) throw new Error('session_unavailable');
+    const text = await this.command(['capture-pane', '-p', '-t', before.pane, '-S', '-1000']);
+    const after = await this.snapshot(ref);
+    if (!after || after.pane !== before.pane) throw new Error('session_changed');
+    return text;
   }
   attach(ref, size = { cols: 80, rows: 24 }) {
     // Only this client lives in the container. The server and its panes remain on the host.

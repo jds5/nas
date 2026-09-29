@@ -3,7 +3,10 @@ import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
 import './style.css';
 const $ = id => document.getElementById(id);
-const term = new Terminal({ cursorBlink: true, fontSize: 14, scrollback: 3000,
+function preference(name, fallback) { try { return localStorage.getItem(name) ?? fallback; } catch { return fallback; } }
+function savePreference(name, value) { try { localStorage.setItem(name, String(value)); } catch {} }
+let fontSize = Math.min(24, Math.max(12, Number(preference('terminal-font', '16')) || 16));
+const term = new Terminal({ cursorBlink: true, fontSize, scrollback: 3000,
   fontFamily: '"SFMono-Regular", Consolas, "Liberation Mono", monospace',
   theme: { background: '#10151b', foreground: '#d8e2ee', cursor: '#80d9c4', selectionBackground: '#385862' },
   linkHandler: { activate() {} }, allowProposedApi: false });
@@ -14,6 +17,7 @@ const maxBytes = 20 * 1024 * 1024;
 let opened = false, socket, selected, connecting = false, ready = false, revision = 0, epoch = 0;
 let sessions = [], switchQueued, composing = false, frameScheduled = false, lastSize = '';
 let terminalMode = true, manualComposer = false;
+let expires = 0, historyOpen = false, historyTimer;
 let pendingAck = 0, ackTimer, submission;
 const key = ref => ref && `${ref.id}|${ref.generation}`;
 function draft(ref = selected) {
@@ -30,6 +34,8 @@ function updateState(text) {
   $('send').disabled = !active || Boolean(submission) || d.files.some(x => !x.uploaded || x.uploading);
   $('attach').disabled = !active || Boolean(submission) || d.files.length >= 4;
   $('draft').disabled = Boolean(submission);
+  $('connection-kind').textContent = selected ? selected.kind === 'ssh' ? '临时 SSH' : 'tmux' : '';
+  updateExpiry();
   $('reconnect').hidden = !selected || active || connecting;
 }
 function focusInput() { if ($('composer').hidden) term.focus(); else $('draft').focus(); }
@@ -38,7 +44,7 @@ function setMode(mode) {
   $('composer').hidden = terminalMode && !manualComposer;
   $('attach').hidden = terminalMode;
   $('toggle-composer').textContent = $('composer').hidden ? '展开输入框' : '收起输入框';
-  $('hint').textContent = selected?.kind === 'ssh' ? '临时 SSH：断开、切换或连接到期会关闭登录 shell；重新连接会新建。' : terminalMode ? '直接在终端输入；支持 Tab、方向键、Ctrl+C 和全屏程序。' : 'Enter 发送 · Ctrl+J 换行；点击终端操作 Codex 菜单。';
+  $('hint').textContent = selected?.kind === 'ssh' ? '临时 SSH：断开、切换或连接到期会关闭登录 shell；重新连接会新建。' : terminalMode ? '直接在终端输入；支持 Tab、方向键、Ctrl+C 和全屏程序。' : '点击终端操作 Codex 菜单；上滚查看只读历史。';
   resize();
 }
 function sendFrame(frame) { if (socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ ...frame, epoch })); }
@@ -57,11 +63,59 @@ function resize() {
   });
 }
 function input(data) {
-  if (!connected() || submission) return;
+  if (!connected() || submission || historyOpen) return;
   if (encoder.encode(data).length > 16000) { notify('单次文本过长，请分段发送。'); return; }
   sendFrame({ type: 'input', data });
 }
 term.onData(input);
+function updateExpiry() {
+  const seconds = connected() && expires ? Math.max(0, Math.ceil((expires - Date.now()) / 1000)) : 0;
+  $('expiry').textContent = seconds ? `剩余 ${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}` : '';
+  $('expiry').classList.toggle('expiring', seconds > 0 && seconds <= 60);
+  $('expiry').title = selected?.kind === 'ssh' ? '到期关闭临时 SSH；重连会新建 shell' : '到期断开网页连接，tmux 任务继续运行';
+}
+setInterval(updateExpiry, 1000);
+function closeHistory(focus = true) {
+  historyOpen = false; clearTimeout(historyTimer); $('history').hidden = true; $('history-content').textContent = '';
+  if (focus && opened) term.focus();
+}
+function openHistory() {
+  if (!connected() || historyOpen) return;
+  historyOpen = true; $('history').hidden = false; $('history-content').textContent = '正在读取历史…'; $('history-content').focus();
+  sendFrame({ type: 'history' });
+  historyTimer = setTimeout(() => { if (historyOpen) $('history-content').textContent = '读取超时，请返回实时终端后重试。'; }, 5000);
+}
+$('history-close').onclick = () => closeHistory();
+$('history').onkeydown = event => { if (event.key === 'Escape') { event.preventDefault(); closeHistory(); } };
+term.attachCustomWheelEventHandler(event => {
+  if (event.ctrlKey) { event.preventDefault(); return false; }
+  if (selected && selected.kind !== 'ssh') {
+    event.preventDefault(); if (event.deltaY < 0) openHistory(); return false;
+  }
+  // Never let alternate-screen wheel fallback generate Up/Down input.
+  if (term.buffer.active.type === 'alternate' && term.modes.mouseTrackingMode === 'none') {
+    event.preventDefault(); notify('当前全屏程序没有本地滚动历史；滚轮不会发送方向键。'); return false;
+  }
+  return true;
+});
+function applyFont() {
+  term.options.fontSize = fontSize; $('font-size').textContent = String(fontSize);
+  document.documentElement.style.setProperty('--terminal-font', `${fontSize}px`);
+  $('font-down').disabled = fontSize <= 12; $('font-up').disabled = fontSize >= 24;
+  savePreference('terminal-font', fontSize); resize();
+}
+$('font-down').onclick = () => { fontSize = Math.max(12, fontSize - 1); applyFont(); };
+$('font-up').onclick = () => { fontSize = Math.min(24, fontSize + 1); applyFont(); };
+function sidebar(collapsed) {
+  $('sidebar').hidden = collapsed; document.querySelector('main').classList.toggle('sidebar-collapsed', collapsed);
+  $('toggle-sidebar').textContent = collapsed ? '展开会话栏' : '收起会话栏';
+  $('toggle-sidebar').setAttribute('aria-expanded', String(!collapsed)); savePreference('terminal-sidebar', collapsed ? 'closed' : 'open'); resize();
+}
+$('toggle-sidebar').onclick = () => sidebar(!$('sidebar').hidden);
+document.addEventListener('focusin', () => {
+  $('focus-status').textContent = historyOpen ? '只读历史 · 不发送按键' : document.activeElement === $('draft') ? '正在输入消息' : document.activeElement?.closest('#terminal') ? '正在操作终端' : '选择终端或消息输入框';
+});
+applyFont(); sidebar(preference('terminal-sidebar', 'open') === 'closed');
 async function api(path, payload) {
   const response = await fetch(path, { method: payload ? 'POST' : 'GET', credentials: 'same-origin', redirect: 'manual', signal: AbortSignal.timeout(15000),
     headers: payload ? { 'Content-Type': 'application/json', 'X-Nas-Csrf-Origin': location.origin } : {}, body: payload ? JSON.stringify(payload) : undefined });
@@ -96,12 +150,14 @@ function ack(ws, forEpoch, bytes) {
   if (pendingAck >= 32768) flush(); else if (!ackTimer) ackTimer = setTimeout(flush, 40);
 }
 function detach() {
+  closeHistory(false); expires = 0;
   revision++; switchQueued = undefined; connecting = ready = false; clearAck();
   const old = socket; socket = undefined; old?.close();
   if (submission) { clearTimeout(submission.timer); submission = undefined; notify('发送结果尚未确认，草稿已保留。请查看终端后决定是否重发。'); }
   updateState('已断开');
 }
 function select(session) {
+  closeHistory(false);
   if (selected) draft().text = $('draft').value;
   else if ($('draft').value) draft(session).text = $('draft').value;
   selected = session; manualComposer = false; setMode('terminal'); $('draft').value = draft().text; $('session-name').textContent = session.name;
@@ -129,12 +185,17 @@ async function connect(session) {
       const msg = JSON.parse(event.data);
       if (msg.epoch !== epoch) return;
       if (msg.type === 'ready') {
-        ready = true; connecting = false; updateState('已连接'); focusInput(); resize();
+        expires = msg.expires; ready = true; connecting = false; updateState('已连接'); focusInput(); resize();
         const next = switchQueued; switchQueued = undefined;
         if (next) connect(next);
       } else if (msg.type === 'mode') {
         const hadFocus = document.activeElement === $('draft') || document.activeElement?.classList.contains('xterm-helper-textarea');
         setMode(msg.mode); if (hadFocus) focusInput();
+      } else if (msg.type === 'history' || msg.type === 'history-error') {
+        if (!historyOpen) return;
+        clearTimeout(historyTimer);
+        $('history-content').textContent = msg.type === 'history' ? msg.data : '历史读取失败，请返回实时终端后重试。';
+        $('history-content').scrollTop = Math.max(0, $('history-content').scrollHeight - $('history-content').clientHeight - 120);
       } else if (msg.type === 'output') {
         const forEpoch = epoch;
         term.write(msg.data, () => ack(ws, forEpoch, encoder.encode(msg.data).length));
@@ -157,6 +218,7 @@ function clearDraft() {
   d.files = []; d.text = ''; $('draft').value = ''; renderAttachments(); notify();
 }
 function submit() {
+  if (historyOpen) closeHistory(false);
   const d = draft(); d.text = $('draft').value;
   if (!connected() || submission || d.files.some(x => !x.uploaded || x.uploading)) return;
   if (!d.text.trim() && !d.files.length) return;

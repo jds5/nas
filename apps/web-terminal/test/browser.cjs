@@ -27,6 +27,14 @@ async function until(check) {
       await page.goto('http://terminal-fixture:3000/terminal');
       await choose('demo-project');
       assert.equal(await page.locator('.keyboard-bar, #paste, #keyboard').count(), 0);
+      assert.equal(await page.locator('#connection-kind').textContent(), 'tmux');
+      await until(async () => (await page.locator('#expiry').textContent()).startsWith('剩余'));
+      const oldFont = Number(await page.locator('#font-size').textContent());
+      await page.locator('#font-up').click(); assert.equal(Number(await page.locator('#font-size').textContent()), oldFont + 1);
+      await page.locator('#font-down').click();
+      await page.locator('#toggle-sidebar').click(); assert.equal(await page.locator('#sidebar').isHidden(), true);
+      await page.locator('#toggle-sidebar').click();
+
       assert.equal(await page.locator('#composer').isHidden(), true);
       await page.locator('.xterm-helper-textarea').pressSequentially('printf RAW_TERMINAL_OK');
       await page.locator('.xterm-helper-textarea').press('Enter');
@@ -55,6 +63,12 @@ async function until(check) {
       await page.locator('#draft').press('Enter');
       await until(async () => await page.locator('#attachments .attachment').count() === 0);
       await until(() => output.includes('网页上传的附件') && output.includes('.png'));
+      await new Promise(r => setTimeout(r, 200));
+      const codexInputBeforeWheel = inputCount;
+      await page.locator('#terminal').hover(); await page.mouse.wheel(0, -300);
+      await until(async () => (await page.locator('#history-content').textContent()).includes('网页上传的附件'));
+      assert.equal(inputCount, codexInputBeforeWheel, 'Codex wheel must not recall previous prompts');
+      await page.locator('#history-close').click();
       for (const method of ['paste', 'drop']) {
         await page.evaluate(({ bytes, method }) => {
           const dt = new DataTransfer(); dt.items.add(new File([new Uint8Array(bytes)], method + '.png', { type: 'image/png' }));
@@ -67,6 +81,16 @@ async function until(check) {
       await choose('demo-project'); await page.locator('#toggle-composer').click(); await page.locator('#draft').fill("seq 1 60000; printf 'FLOW_%s_OK\\n' 'END'");
       await page.locator('#draft').press('Enter');
       await until(() => output.includes('FLOW_END_OK'));
+      await new Promise(r => setTimeout(r, 250));
+      const inputBeforeWheel = inputCount;
+      await page.locator('#terminal').hover(); await page.mouse.wheel(0, -500);
+      await until(async () => (await page.locator('#history-content').textContent()).includes('FLOW_END_OK'));
+      assert.equal(inputCount, inputBeforeWheel, 'wheel must not send arrow/input to shell or Codex');
+      const historyTop = await page.locator('#history-content').evaluate(el => el.scrollTop);
+      await page.locator('#history-content').hover(); await page.mouse.wheel(0, -400);
+      await until(async () => await page.locator('#history-content').evaluate(el => el.scrollTop) < historyTop);
+      await page.locator('#history-content').press('Escape'); assert.equal(await page.locator('#history').isHidden(), true);
+
       assert.equal(await page.locator('#state').textContent(), '已连接');
       assert.equal(wsCount, 1); assert.equal(ticketRequests, 1);
       await page.locator('#detach').click(); await page.getByRole('button', { name: '重新连接', exact: true }).click();
@@ -79,10 +103,19 @@ async function until(check) {
       await page.locator('.xterm-helper-textarea').pressSequentially(`printf 'SSH_%s_OK\\n' '${marker}'`);
       await page.locator('.xterm-helper-textarea').press('Enter');
       await until(() => output.includes(`SSH_${marker}_OK`));
+      // Force alternate buffer in isolated SSH shell to reproduce xterm's arrow fallback.
+      await page.locator('.xterm-helper-textarea').pressSequentially("printf '\\033[?1049h'");
+      await page.locator('.xterm-helper-textarea').press('Enter');
+      await new Promise(r => setTimeout(r, 250));
+      const sshInputBeforeWheel = inputCount;
+      await page.locator('#terminal').hover(); await page.mouse.wheel(0, -500);
+      await new Promise(r => setTimeout(r, 250));
+      assert.equal(inputCount, sshInputBeforeWheel, 'SSH alternate wheel must not become arrow input');
+
       await page.locator('#detach').click();
       assert.equal(await page.locator('#notice').textContent(), '临时 SSH 已关闭。');
       await page.close();
-      console.log(`${label}: single-WebSocket switching / drafts / Enter / Ctrl+J / IME / images / clipboard / drop / flow-control / reconnect PASS`);
+      console.log(`${label}: single-WebSocket switching / drafts / Enter / Ctrl+J / IME / images / clipboard / drop / flow-control / reconnect / read-only history / wheel-no-input / desktop controls PASS`);
     }
   } finally { await browser.close(); }
 })().catch(error => { console.error('Browser acceptance failed:', error.stack); process.exit(1); });

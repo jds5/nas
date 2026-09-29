@@ -26,5 +26,6 @@ export class Terminals {
   backend(ref) { return ref?.kind === 'ssh' ? this.ssh : (!ref?.kind || ref.kind === 'tmux') ? this.tmux : undefined; }
   async exists(ref) { return Boolean(await this.backend(ref)?.exists(ref)); }
   attach(ref, size) { const backend = this.backend(ref); if (!backend) throw new Error('invalid_session'); return backend.attach(ref, size); }
+  async history(ref) { if (this.backend(ref) !== this.tmux) throw new Error('history_unavailable'); return this.tmux.history(ref); }
   async snapshot(ref) { return this.backend(ref) === this.tmux ? this.tmux.snapshot(ref) : false; }
 }

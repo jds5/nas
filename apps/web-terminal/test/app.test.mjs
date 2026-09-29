@@ -246,3 +246,23 @@ test('temporary SSH shares authentication and closes its process on disconnect a
     }
   } finally { url = previous; instance.shutdown(); }
 });
+
+
+test('history snapshots read tmux scrollback without entering copy mode or sending input', async () => {
+  const ref = (await tmux.list()).find(s => s.name === 'web-test');
+  assert.ok(ref);
+  const before = await tmux.command(['display-message', '-p', '-t', ref.id, '#{pane_in_mode}']);
+  const text = await tmux.history(ref);
+  assert.equal(typeof text, 'string');
+  assert.equal(await tmux.command(['display-message', '-p', '-t', ref.id, '#{pane_in_mode}']), before);
+  await assert.rejects(tmux.history({ ...ref, generation: 'stale' }));
+  const assertion = await token(), ws = wsConnect(assertion, await reservation(assertion, ref));
+  let history;
+  ws.on('message', raw => { const m = JSON.parse(raw); if (m.type === 'history') history = m; });
+  await once(ws, 'open');
+  try {
+    ws.send(JSON.stringify({ type: 'history', epoch: 0 }));
+    await waitFor(() => history);
+    assert.equal(history.epoch, 0); assert.equal(typeof history.data, 'string');
+  } finally { ws.close(); await once(ws, 'close'); }
+});

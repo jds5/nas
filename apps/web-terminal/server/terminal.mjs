@@ -54,6 +54,20 @@ export function connectTerminal({ ws, ref, user, tmux, peers, uploads, maxDurati
       attach(msg.ref, msg.epoch, msg);
     } catch { fail(1011, 'terminal_unavailable'); }
   }
+  let historyBusy = false, historyAt = 0;
+  async function history() {
+    if (historyBusy) { send({ type: 'history-error', epoch }); return; }
+    historyBusy = true; const client = term, ownEpoch = epoch;
+    try {
+      await new Promise(resolve => setTimeout(resolve, Math.max(0, 1000 - (Date.now() - historyAt))));
+      if (closed || client !== term || ownEpoch !== epoch || changing || Date.now() >= deadline) return;
+      historyAt = Date.now();
+      const data = await tmux.history(activeRef);
+      if (!closed && client === term && ownEpoch === epoch && !changing && Date.now() < deadline) send({ type: 'history', data, epoch });
+    } catch {
+      if (!closed && client === term && ownEpoch === epoch) send({ type: 'history-error', epoch });
+    } finally { historyBusy = false; }
+  }
   async function submitImages(msg) {
     if (submitting || changing || typeof msg.requestId !== 'string' || !/^[\w-]{1,64}$/.test(msg.requestId)) return fail(1008, 'invalid_submission');
     submitting = true; const ownSerial = serial;
@@ -83,6 +97,7 @@ export function connectTerminal({ ws, ref, user, tmux, peers, uploads, maxDurati
       }
       if (changing || submitting) return;
       if (msg.type === 'input' && typeof msg.data === 'string' && Buffer.byteLength(msg.data) <= 16384) term.write(msg.data);
+      else if (msg.type === 'history') void history();
       else if (msg.type === 'resize' && validSize(msg)) term.resize(msg.cols, msg.rows);
       else if (msg.type === 'submit-images' && uploads) void submitImages(msg);
       else throw new Error();

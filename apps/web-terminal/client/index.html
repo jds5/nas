@@ -11,6 +11,7 @@
 <body>
   <header>
     <a class="brand" href="/terminal" aria-label="NAS 终端首页"><span class="brand-icon">&gt;_</span><span>NAS <span class="muted">/ 终端</span></span></a>
+    <button id="toggle-sidebar" aria-controls="sidebar" aria-expanded="true">收起会话栏</button>
     <span class="access-badge"><span class="dot"></span>Access 保护</span>
   </header>
   <main>
@@ -24,18 +25,19 @@
     </aside>
     <section class="workspace" aria-label="终端工作区">
       <div class="terminal-heading">
-        <div><span id="connection-dot" class="dot idle"></span><strong id="session-name">选择一个会话</strong><span id="state">尚未连接</span></div>
-        <div class="actions"><button id="toggle-composer">展开输入框</button><button id="reconnect" hidden>重新连接</button><button id="detach" disabled>断开</button><button id="fullscreen" title="全屏终端" aria-label="全屏终端">⛶</button></div>
+        <div><span id="connection-dot" class="dot idle"></span><strong id="session-name">选择一个会话</strong><span id="state">尚未连接</span><span id="connection-kind" class="muted"></span><span id="expiry" class="muted"></span></div>
+        <div class="actions"><button id="font-down" aria-label="缩小终端字号">A−</button><span id="font-size">16</span><button id="font-up" aria-label="增大终端字号">A＋</button><button id="toggle-composer">展开输入框</button><button id="reconnect" hidden>重新连接</button><button id="detach" disabled>断开</button><button id="fullscreen" title="全屏终端" aria-label="全屏终端">⛶</button></div>
       </div>
       <div id="notice" role="status" hidden></div>
-      <div id="terminal-wrap"><div id="empty"><span class="empty-icon">&gt;_</span><h2>你的工作，一直都在。</h2><p>选择 tmux 会话，或新建临时 SSH。<br>支持 Codex、命令行与启动确认界面。</p></div><div id="terminal" hidden></div></div>
+      <div id="terminal-wrap"><section id="history" hidden aria-label="只读终端历史"><div class="history-heading"><span>终端历史快照 · 最近最多 1000 行及当前屏幕</span><button id="history-close">返回实时终端 · Esc</button></div><pre id="history-content" tabindex="0"></pre></section><div id="empty"><span class="empty-icon">&gt;_</span><h2>你的工作，一直都在。</h2><p>选择 tmux 会话，或新建临时 SSH。<br>支持 Codex、命令行与启动确认界面。</p></div><div id="terminal" hidden></div></div>
       <form id="composer" autocomplete="off">
+        <div class="input-label"><strong>消息输入</strong><span>文字与图片发送到当前会话</span></div>
         <div id="attachments" aria-label="待发送图片"></div>
         <label for="draft" class="sr-only">消息输入</label>
         <textarea id="draft" rows="6" placeholder="输入消息，或粘贴、拖入图片…" spellcheck="false"></textarea>
         <div class="composer-actions"><button id="attach" title="PNG/JPEG/WebP，最多 4 张，共 20 MiB" type="button" disabled>添加图片</button><input id="image-files" type="file" accept="image/png,image/jpeg,image/webp" multiple hidden><span>Enter 发送 · Ctrl+J 换行</span><button id="send" type="submit" disabled>发送 ↵</button></div>
       </form>
-      <footer><span id="hint">点击终端可直接操作命令行或初始化菜单。</span><a href="/cdn-cgi/access/logout">退出登录</a></footer>
+      <footer><span id="focus-status">点击终端或输入框开始输入</span><span id="hint">点击终端可直接操作命令行或初始化菜单。</span><a href="/cdn-cgi/access/logout">退出登录</a></footer>
     </section>
   </main>
 </body>

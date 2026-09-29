@@ -48,7 +48,7 @@
 cd /home/yao/code/nas/apps/web-terminal
 docker build --target test -t nas-web-terminal:test .
 docker run --rm --init --cap-drop ALL --security-opt no-new-privileges nas-web-terminal:test
-docker build -t nas-web-terminal:0.3.0 .
+docker build -t nas-web-terminal:0.4.0 .
 ```
 
 测试使用隔离 tmux server 和临时 RSA 测试密钥，覆盖错误/缺失 JWT、exp/nbf/iss/aud、身份、Origin/CSRF、重放、真实终端输入输出与 resize、断开与到期后会话存活。测试密钥不进入生产镜像；无环境变量免鉴权开关。
@@ -114,3 +114,12 @@ tmux 连接只结束自己的 client；临时 SSH 则关闭对应登录 shell。
 临时 SSH 按正常 SSH 挂断语义结束登录 shell；主动断开立即关闭，网络无响应通常在两次 5 秒心跳内检测。JWT 到期/15 分钟上限也会关闭，不能用于需要断线保活的任务；这类任务使用 tmux。自行 nohup/disown 或新建 tmux 的进程遵循其自身保活规则。临时 SSH 中可以运行 Codex 终端，但网页图片提交仍限定于可核对前台进程的 tmux 窗格。
 
 回滚到 0.2.0：停止 `ssh-transport`，恢复备份的 Compose，执行 `docker compose up -d --no-build --remove-orphans`；不会杀 tmux。备份目录见操作记录。若撤销专用密钥，只删除 `~/.ssh/authorized_keys` 中末尾注释为 `nas-web-terminal-ephemeral` 的这一行，保留其他登录密钥，不直接覆盖其他并发变更。专用密钥目录可保留但不得入库。该回滚会结束所有网页临时 SSH。
+
+
+## PC 布局与滚轮（0.4.0）
+
+顶部提供可记忆的会话栏折叠开关；终端工具栏 A−/A＋调整字号（默认 16，范围 12–24）。保留大消息框，当前输入区域高亮，显示键盘焦点归属。连接状态旁显示连接类型和剩余有效时间。
+
+tmux 会话向上滚动打开只读历史快照，再用滚轮浏览；点击“返回实时终端”或 Esc 关闭。读取当前窗格保存的最近最多 1000 行及当前屏幕，不改变 Codex 输入、不进入共享 copy-mode、不更改 tmux mouse 设置。只展示 tmux 实际保留的终端文本，不保证包含完整 Codex 对话；快照期间新输出在后台继续接收，重新打开可读取新快照。未把历史写入浏览器持久存储或服务端日志。
+
+临时 SSH 普通终端使用本地滚动历史；全屏程序未开启鼠标协议时禁止滚轮模拟方向键，因此不会误选历史命令。程序主动启用鼠标协议时保留原生鼠标交互。
