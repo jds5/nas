@@ -7,6 +7,9 @@
 | 文档 | 内容 |
 | --- | --- |
 | [网络安全架构](docs/architecture/家庭NAS网络安全架构.md) | 入口、网络边界、远程维护与待验收事项 |
+| [Gopeed 与 JDownloader 部署](docs/operations/2026-10-06-下载器部署.md) | 百度/夸克鉴权、国外网盘下载器、内网入口与 SSD 备份排除 |
+| [Gopeed 使用与维护](apps/gopeed/README.md) | 百度/夸克扩展、后台任务与续传验证 |
+| [JDownloader 使用与维护](apps/jdownloader/README.md) | 内网桌面、国外网盘账户与镜像复现 |
 | [OpenList 多网盘部署](docs/operations/2026-10-06-OpenList部署.md) | 内网 Web、百度 OAuth 接入、SSD 后台下载与备份排除 |
 | [百度网盘 Web 部署](docs/operations/2026-10-06-百度网盘Web部署.md) | Rust Web v2.2.4、内网认证、SSD 落盘及验证 |
 | [百度网盘 Web GUI 调研](apps/baidupcs-web/README.md) | 第三方界面对比、内网密码入口与运行配置 |

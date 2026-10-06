@@ -1,0 +1,31 @@
+name: nas-gopeed
+services:
+  gopeed:
+    image: sha256:bfc5ad4be9890e9e7857e18a3b780fe9248720bd2c6bb922b4c236e75e8aba99
+    pull_policy: never
+    user: "1000:1000"
+    entrypoint: [/app/gopeed]
+    command: [-c, /run/gopeed-config.json]
+    restart: unless-stopped
+    init: true
+    ports:
+      - "192.168.50.33:9999:9999"
+    environment:
+      TZ: Asia/Shanghai
+    volumes:
+      - /opt/nas/cache/gopeed/private/config.json:/run/gopeed-config.json:ro
+      - /opt/nas/cache/gopeed/storage:/app/storage
+      - /opt/nas/cache/gopeed/downloads:/downloads
+    read_only: true
+    tmpfs:
+      - /tmp:uid=1000,gid=1000,mode=700
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 256
+    mem_limit: 1g
+    cpus: 2
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
