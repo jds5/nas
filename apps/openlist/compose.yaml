@@ -1,0 +1,37 @@
+# NAS 内网多网盘管理；运行数据和下载均在 SSD cache，排除自动备份。
+name: nas-openlist
+services:
+  openlist:
+    image: sha256:75551796d9435c583199fc7439157985e6692bf495b0422c19c510853eb55101
+    pull_policy: never
+    user: "1000:1000"
+    entrypoint: [/opt/openlist/openlist]
+    command: [server, --no-prefix]
+    restart: unless-stopped
+    init: true
+    environment:
+      TZ: Asia/Shanghai
+    ports:
+      - "192.168.50.33:5244:5244"
+    volumes:
+      - /opt/nas/cache/openlist/data:/opt/openlist/data
+      - /opt/nas/cache/openlist/downloads:/downloads
+    read_only: true
+    tmpfs:
+      - /tmp:uid=1000,gid=1000,mode=700
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 256
+    mem_limit: 1g
+    cpus: 2
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+    healthcheck:
+      test: [CMD, wget, -q, -O, /dev/null, http://127.0.0.1:5244/ping]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
