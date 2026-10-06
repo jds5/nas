@@ -11,6 +11,7 @@
 | [网盘下载器最终汇总](docs/operations/2026-10-07-网盘下载器最终汇总.md) | 最终分工、当前入口与任务、SSD 备份边界、百度残片清理和维护导航 |
 | [Gopeed 与 JDownloader 部署](docs/operations/2026-10-06-下载器部署.md) | 百度/夸克鉴权、SSD 备份排除及 JDownloader 卸载记录 |
 | [Gopeed 使用与维护](apps/gopeed/README.md) | 夸克扩展、后台任务与续传验证；百度改走 Rust |
+| [Gopeed 多层目录修复](docs/operations/2026-10-07-Gopeed多层目录白名单修复.md) | 默认路径报白名单错误的原因、配置修复、任务恢复与回滚 |
 | [Gopeed 夸克下载调优](docs/operations/2026-10-07-Gopeed夸克下载调优.md) | 88VIP 权益核对、4–256 连接测速、保留原任务进度与回滚 |
 | [OpenList 多网盘部署](docs/operations/2026-10-06-OpenList部署.md) | 内网 Web、百度 OAuth 接入、SSD 后台下载与备份排除 |
 | [百度网盘 Web 部署](docs/operations/2026-10-06-百度网盘Web部署.md) | Rust Web v2.2.4、内网认证、SSD 落盘及验证 |
