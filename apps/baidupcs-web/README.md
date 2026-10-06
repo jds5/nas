@@ -13,7 +13,7 @@
 | [Galiathuss/BaiduPCS-WEB-UI](https://github.com/Galiathuss/BaiduPCS-WEB-UI) | 基于 3.9.5 与独立 API 分支，作者说明下载状态/位置控制不够精确；不能直接接现有 CLI |
 | [komorebiCarry/BaiduPCS-Rust](https://github.com/komorebiCarry/BaiduPCS-Rust) | 独立 Rust 下载器与 Vue Web 界面，支持队列、扫码/Cookie 登录、访问密码；[v2.2.4](https://github.com/komorebiCarry/BaiduPCS-Rust/releases/tag/v2.2.4) 于 2026-09-18 发布，优先作为隔离验证候选 |
 
-Rust 项目不是现有 Go 程序的前端，不能自动接管当前 nohup 任务或复用 Go 续传文件。保留现有安装、账号配置及 PPSA03671 任务；不把当前目录再次加入 Web 队列，避免重复下载。若最终要求直接管理原 CLI 进程，需另外开发适配层，不能将 Rust 独立界面描述成已接管。
+Rust 项目不是 Go 程序的前端，不能自动接管 nohup 任务或复用 Go 续传文件。后续用户明确授权停止并清理旧任务、卸载 Go，再由 Rust 重新下载：现已执行，PPSA03671 在 Web 下载管理中运行，详见部署记录的任务迁移部分。
 
 ## 部署与存储
 
@@ -26,7 +26,7 @@ Rust 项目不是现有 Go 程序的前端，不能自动接管当前 nohup 任�
 - Web 状态：`/opt/nas/cache/baidupcs-downloads/.web-state/{config,data,logs,wal}`；含登录凭据，仅限 yao 访问。
 - 两者都在 SSD 上、均被已核对的 restic 和配置 Git 排除，**Web 任务/账号状态也不自动备份**。
 - 应用自动备份总开关关闭、备份配置为空、分享同步订阅为空；不自动上传本地数据。
-- 原 CLI 下载目录与配置不挂入容器；当前 PPSA03671 的 nohup 任务仍由 Go 程序运行，不会出现在 Web 队列，不能重复创建相同任务来“接管”。
+- 原 CLI 已卸载、旧任务文件已清理；PPSA03671 已在 Web 中重新创建，不要重复提交。
 
 ## 维护与回滚
 
@@ -38,7 +38,7 @@ Rust 项目不是现有 Go 程序的前端，不能自动接管当前 nohup 任�
 docker compose -f /home/yao/code/nas/apps/baidupcs-web/compose.yaml ps
 ```
 
-停用本次新增服务（中断 Web 下载，不影响原 Go CLI；不删除文件）：
+停用本次新增服务（中断 Web 下载；不删除文件）：
 
 ```bash
 docker compose -f /home/yao/code/nas/apps/baidupcs-web/compose.yaml stop gateway web
