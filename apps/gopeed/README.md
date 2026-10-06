@@ -4,12 +4,12 @@
 
 ## 使用
 
-- 百度扩展 `monkeyWie/gopeed-extension-baiduwp` v1.3.7：复用 OpenList 的百度 OAuth client_id、client_secret 和 refresh_token，刷新直连百度官方接口。
+- 2026-10-07 已移除百度扩展及 Gopeed 内全部百度任务记录，保留已下载文件。百度下载统一使用现有 Rust 网页入口 http://192.168.50.33:18888。
 - 夸克扩展 `iGwkang/gopeed-extension-quark` v1.0.4：复用 OpenList 的网页登录 Cookie，支持自己的网盘目录和分享链接。关闭 `delete_file`，不自动清理云端转存文件；分享下载仍需要转存空间。
-- 在“新建任务”粘贴网盘目录链接，解析后选择文件下载。百度示例：`https://pan.baidu.com/disk/main#/index?category=all&path=%2FPPSA03671`。该目录原有 Rust 下载任务仍存在，不要重复下载整目录。
+- 在“新建任务”粘贴夸克网盘目录或分享链接，解析后选择文件下载。
 - 夸克自己的目录链接可从 `https://pan.quark.cn` 地址栏复制；根目录示例：`https://pan.quark.cn/list#/list/all`。
-- 百度扩展不支持直接解析分享链接，须先转存到自己的网盘；目录递归有深度限制。夸克分享可带 `?pwd=提取码`。
-- 默认同时运行 2 个文件，HTTP 新任务默认每文件 256 个连接（2026-10-07 夸克实测后调整）。这是通用 HTTP 默认值，非按网盘自动选择；新建百度任务建议手动设为 4，已有百度任务仍为 4。当前夸克任务已保留进度并转换到 256 分片，实测约 25 MiB/s；详见[调优记录](../../docs/operations/2026-10-07-Gopeed夸克下载调优.md)。
+- 夸克分享可带 `?pwd=提取码`。
+- 默认同时运行 1 个文件，HTTP 每文件 256 个连接。当前夸克任务保留进度，实测约 25 MiB/s。256 是第三方扩展建议及现场测速值，不是官方 VIP 连接上限或账号安全保证；未找到可直接套用的官方数值。详见[调优与后续调整记录](../../docs/operations/2026-10-07-Gopeed夸克下载调优.md)。
 - 下载在 NAS 后台运行，关闭网页不影响；目标容器路径 `/downloads`，宿主 `/opt/nas/cache/gopeed/downloads`。不自动解压，不自动删除已下载文件。
 
 ## 存储与网络
