@@ -7,6 +7,7 @@
 | 文档 | 内容 |
 | --- | --- |
 | [网络安全架构](docs/architecture/家庭NAS网络安全架构.md) | 入口、网络边界、远程维护与待验收事项 |
+| [网盘下载器最终汇总](docs/operations/2026-10-07-网盘下载器最终汇总.md) | 最终分工、当前入口与任务、SSD 备份边界、百度残片清理和维护导航 |
 | [Gopeed 与 JDownloader 部署](docs/operations/2026-10-06-下载器部署.md) | 百度/夸克鉴权、SSD 备份排除及 JDownloader 卸载记录 |
 | [Gopeed 使用与维护](apps/gopeed/README.md) | 夸克扩展、后台任务与续传验证；百度改走 Rust |
 | [Gopeed 夸克下载调优](docs/operations/2026-10-07-Gopeed夸克下载调优.md) | 88VIP 权益核对、4–256 连接测速、保留原任务进度与回滚 |

@@ -1,6 +1,8 @@
-# 百度网盘 Web GUI 候选部署
+# 百度网盘 Rust 下载器
 
 2026-10-06：已部署 BaiduPCS-Rust v2.2.4 与专用 Nginx 密码入口，内网地址 **http://192.168.50.33:18888**。现场验证、镜像来源和限制见[部署记录](../../docs/operations/2026-10-06-百度网盘Web部署.md)。
+
+2026-10-07 收尾核对：服务正常，任务列表及宿主下载目录为空；Gopeed 百度插件已移除，后续百度下载统一使用本服务。下方选型和迁移内容为历史记录，当前状态见[最终汇总](../../docs/operations/2026-10-07-网盘下载器最终汇总.md)。
 
 ## 选型证据
 
@@ -13,7 +15,7 @@
 | [Galiathuss/BaiduPCS-WEB-UI](https://github.com/Galiathuss/BaiduPCS-WEB-UI) | 基于 3.9.5 与独立 API 分支，作者说明下载状态/位置控制不够精确；不能直接接现有 CLI |
 | [komorebiCarry/BaiduPCS-Rust](https://github.com/komorebiCarry/BaiduPCS-Rust) | 独立 Rust 下载器与 Vue Web 界面，支持队列、扫码/Cookie 登录、访问密码；[v2.2.4](https://github.com/komorebiCarry/BaiduPCS-Rust/releases/tag/v2.2.4) 于 2026-09-18 发布，优先作为隔离验证候选 |
 
-Rust 项目不是 Go 程序的前端，不能自动接管 nohup 任务或复用 Go 续传文件。后续用户明确授权停止并清理旧任务、卸载 Go，再由 Rust 重新下载：现已执行，PPSA03671 在 Web 下载管理中运行，详见部署记录的任务迁移部分。
+Rust 项目不是 Go 程序的前端，不能自动接管 nohup 任务或复用 Go 续传文件。2026-10-06 曾按用户授权停止并清理旧任务、卸载 Go，再由 Rust 重新创建 PPSA03671 下载，详见部署记录的任务迁移部分；该任务不在 2026-10-07 收尾时的队列中。
 
 ## 部署与存储
 
@@ -26,7 +28,7 @@ Rust 项目不是 Go 程序的前端，不能自动接管 nohup 任务或复用 
 - Web 状态：`/opt/nas/cache/baidupcs-downloads/.web-state/{config,data,logs,wal}`；含登录凭据，仅限 yao 访问。
 - 两者都在 SSD 上、均被已核对的 restic 和配置 Git 排除，**Web 任务/账号状态也不自动备份**。
 - 应用自动备份总开关关闭、备份配置为空、分享同步订阅为空；不自动上传本地数据。
-- 原 CLI 已卸载、旧任务文件已清理；PPSA03671 已在 Web 中重新创建，不要重复提交。
+- 原 CLI 已卸载、旧任务文件已清理；后续创建任务前先核对当前队列与目标目录，避免重复下载。
 
 ## 维护与回滚
 
