@@ -7,6 +7,9 @@
 | 文档 | 内容 |
 | --- | --- |
 | [网络安全架构](docs/architecture/家庭NAS网络安全架构.md) | 入口、网络边界、远程维护与待验收事项 |
+| [百度网盘 Web 部署](docs/operations/2026-10-06-百度网盘Web部署.md) | Rust Web v2.2.4、内网认证、SSD 落盘及验证 |
+| [百度网盘 Web GUI 调研](apps/baidupcs-web/README.md) | 第三方界面对比、内网密码入口与运行配置 |
+| [BaiduPCS-Go 部署准备](docs/operations/2026-10-06-BaiduPCS部署准备.md) | SSD 下载目录与备份排除核对、首次安装脚本与后续状态 |
 | [断电重启服务恢复](docs/operations/2026-10-04-断电重启服务恢复.md) | NPM、网页终端与媒体反代恢复，开机依赖遗留问题 |
 | [Codex 代理更新](docs/operations/2026-10-04-Codex代理更新.md) | 宿主机 CLI 更新至 0.160.0、会话保持与回滚 |
 | [Immich 视频上传排查](docs/operations/2026-09-29-Immich视频上传排查.md) | 大文件配置、历史日志与待复现原因 |
