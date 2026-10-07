@@ -305,3 +305,21 @@ test('Codex reading is bound to current epoch, cancels on switch and rejects she
     const [code] = await once(ws, 'close'); assert.equal(code, 1008);
   } finally { ws?.terminate(); instance.shutdown(); url = previous; await tmux.command(['kill-session', '-t', ref.id]); }
 });
+
+
+test('JWT expiry blocks new HTTP requests and upgrades while established connection remains usable', { timeout: 8000 }, async () => {
+  const exp = Math.floor(Date.now() / 1000) + 2;
+  const assertion = await token({ exp }), ref = (await tmux.list())[0];
+  const ticket = await reservation(assertion, ref);
+  const ws = wsConnect(assertion, ticket); const messages = [];
+  ws.on('message', raw => messages.push(JSON.parse(raw)));
+  try {
+    await once(ws, 'open');
+    await new Promise(resolve => setTimeout(resolve, Math.max(0, exp * 1000 - Date.now() + 100)));
+    assert.equal(ws.readyState, WebSocket.OPEN);
+    assert.equal((await request('/terminal/manage/api/sessions', { assertion })).status, 403);
+    assert.equal(await deniedWS(wsConnect(assertion, ticket)), 403);
+    ws.send(JSON.stringify({ type: 'history', epoch: 0 }));
+    await waitFor(() => messages.some(m => m.type === 'history'));
+  } finally { ws.close(); await once(ws, 'close'); }
+});

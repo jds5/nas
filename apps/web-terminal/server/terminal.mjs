@@ -5,8 +5,9 @@ export const validSize = s => s && Number.isInteger(s.cols) && Number.isInteger(
 export function connectTerminal({ ws, ref, user, tmux, peers, uploads, conversation, maxDurationMs }) {
   let term, activeRef = ref, epoch = 0, changing = false, serial = 0;
   let reading;
-  let closed = false, queued = 0, alive = true, submitting = false;
-  const deadline = Math.min(user.exp * 1000, Date.now() + maxDurationMs);
+  let closed = false, queued = 0, lastPong = Date.now(), submitting = false;
+  // JWT is validated at upgrade; this authenticated connection has its own fixed lifetime.
+  const deadline = Date.now() + maxDurationMs;
   const send = value => { if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(value)); };
   const killClient = () => { const old = term; term = null; try { old?.kill(); } catch {} };
   const finish = () => {
@@ -15,7 +16,7 @@ export function connectTerminal({ ws, ref, user, tmux, peers, uploads, conversat
     reading?.abort(); peers.delete(ws); killClient();
   };
   const fail = (code, reason) => { finish(); ws.close(code, reason); };
-  const expiry = setTimeout(() => fail(4001, 'reauthenticate'), Math.max(0, deadline - Date.now()));
+  const expiry = setTimeout(() => fail(4001, 'session_expired'), Math.max(0, deadline - Date.now()));
   let modeBusy = false, lastMode;
   async function reportMode() {
     if (modeBusy || closed || changing) return;
@@ -27,8 +28,11 @@ export function connectTerminal({ ws, ref, user, tmux, peers, uploads, conversat
     } finally { modeBusy = false; }
   }
   const modeTimer = setInterval(() => void reportMode(), 1500);
-  const heartbeat = setInterval(() => { if (!alive) return ws.terminate(); alive = false; ws.ping(); }, 5000);
-  ws.on('pong', () => { alive = true; });
+  const heartbeat = setInterval(() => {
+    if (Date.now() - lastPong >= 90000) { finish(); return ws.terminate(); }
+    if (ws.readyState === WebSocket.OPEN) ws.ping();
+  }, 15000);
+  ws.on('pong', () => { lastPong = Date.now(); });
   ws.on('close', finish); ws.on('error', finish);
   function attach(next, nextEpoch, size) {
     reading?.abort(); killClient(); queued = 0; activeRef = next; epoch = nextEpoch;
@@ -110,7 +114,7 @@ export function connectTerminal({ ws, ref, user, tmux, peers, uploads, conversat
     } finally { submitting = false; }
   }
   ws.on('message', (raw, binary) => {
-    if (closed || Date.now() >= deadline) return fail(4001, 'reauthenticate');
+    if (closed || Date.now() >= deadline) return fail(4001, 'session_expired');
     try {
       if (binary) throw new Error();
       const msg = JSON.parse(raw.toString());

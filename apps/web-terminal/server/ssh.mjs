@@ -7,7 +7,7 @@ export const SSH_ARGS = ['-F', '/dev/null', '-e', 'none',
       '-o', 'GlobalKnownHostsFile=/dev/null', '-o', 'HostKeyAlias=nas-web-local',
       '-o', 'ProxyCommand=/usr/bin/socat STDIO UNIX-CONNECT:/run/host-ssh/transport/ssh.sock',
       '-o', 'ClearAllForwardings=yes', '-o', 'ForwardAgent=no', '-o', 'ControlMaster=no',
-      '-o', 'ConnectTimeout=8', '-o', 'ServerAliveInterval=5', '-o', 'ServerAliveCountMax=1',
+      '-o', 'ConnectTimeout=8', '-o', 'ServerAliveInterval=15', '-o', 'ServerAliveCountMax=6',
       'yao@127.0.0.1'];
 
 // Only a fixed NAS endpoint is supported; no client-controlled host, user, key or command.

@@ -29,6 +29,7 @@ async function until(check) {
       assert.equal(await page.locator('.keyboard-bar, #paste, #keyboard').count(), 0);
       assert.equal(await page.locator('#connection-kind').textContent(), 'tmux');
       await until(async () => (await page.locator('#expiry').textContent()).startsWith('剩余'));
+      assert.match(await page.locator('#expiry').textContent(), /^剩余 (23:59:\d{2}|24:00:00)$/);
       const oldFont = Number(await page.locator('#font-size').textContent());
       await page.locator('#font-up').click(); assert.equal(Number(await page.locator('#font-size').textContent()), oldFont + 1);
       await page.locator('#font-down').click();

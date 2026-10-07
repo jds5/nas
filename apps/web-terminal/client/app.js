@@ -74,7 +74,7 @@ function input(data) {
 term.onData(input);
 function updateExpiry() {
   const seconds = connected() && expires ? Math.max(0, Math.ceil((expires - Date.now()) / 1000)) : 0;
-  $('expiry').textContent = seconds ? `剩余 ${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}` : '';
+  $('expiry').textContent = seconds ? `剩余 ${Math.floor(seconds / 3600)}:${String(Math.floor(seconds / 60) % 60).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}` : '';
   $('expiry').classList.toggle('expiring', seconds > 0 && seconds <= 60);
   $('expiry').title = selected?.kind === 'ssh' ? '到期关闭临时 SSH；重连会新建 shell' : '到期断开网页连接，tmux 任务继续运行';
 }

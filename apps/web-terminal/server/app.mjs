@@ -38,7 +38,7 @@ function reject(socket) {
   socket.end('HTTP/1.1 403 Forbidden\r\nConnection: close\r\nCache-Control: no-store\r\nContent-Length: 0\r\n\r\n');
 }
 
-export function createApp({ config, keyResolver, tmux = new Tmux(), uploads, ssh, conversation, maxDurationMs = 15 * 60 * 1000 } = {}) {
+export function createApp({ config, keyResolver, tmux = new Tmux(), uploads, ssh, conversation, maxDurationMs = 24 * 60 * 60 * 1000 } = {}) {
   tmux = new Terminals(tmux, ssh);
   const authenticate = authorizer(config, keyResolver);
   const tickets = new Map();

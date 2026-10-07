@@ -29,7 +29,7 @@
 
 所有路径包括 HTML/JS/CSS 都要求有效 JWT。没有匿名 HTTP 健康检查；Docker 只检查进程 TCP 监听，健康不代表 Access 已配置或公网验收通过。配置缺失/错误统一拒绝。服务只接受人类邮箱白名单，不接受 Service Token。
 
-连接过程使用 POST 申请 30 秒有效的一次性内存票据，再通过 WebSocket 子协议提交；票据不进入 URL。POST 同时要求精确 Origin、自定义 CSRF Origin，WebSocket 要求精确 Origin。票据绑定验签身份与 session ID、创建时间、server PID 和 socket 身份；变化时重新选取，不按名字盲连。WebSocket 最迟在 JWT 到期或连接满 15 分钟时断开，tmux 任务保留，可再次连接；临时 SSH 则关闭，再连接会新建 shell。Access 撤销不会实时推送到已建立的连接，此时最长窗口为 15 分钟；紧急撤销可直接停止此容器，已有 tmux 任务不受影响。
+连接过程使用 POST 申请 30 秒有效的一次性内存票据，再通过 WebSocket 子协议提交；票据不进入 URL。POST 同时要求精确 Origin、自定义 CSRF Origin，WebSocket 要求精确 Origin。票据绑定验签身份与 session ID、创建时间、server PID 和 socket 身份；变化时重新选取，不按名字盲连。0.5.1 起，WebSocket 在成功鉴权建连满 24 小时时由服务端断开，原 JWT 到期不提前终止已建立连接，tmux 任务保留，可再次连接；临时 SSH 则关闭，再连接会新建 shell。Access 撤销不会实时推送到已建立的连接，已建立连接的剩余窗口最长为 24 小时；紧急撤销可直接停止此容器，已有 tmux 任务不受影响。
 
 最多 8 个活动连接、每身份 4 个；输出背压、帧长、票据数量受限；无输入重放。`attach-session -E` 不用容器环境覆盖宿主 session 环境；不使用 `-d`。检测到 tmux `exit-unattached` 开启时拒绝连接，防止断开误终止整个 server。尺寸按 tmux 自身 window-size 规则与其他客户端共同决定。
 
@@ -39,7 +39,7 @@
 
 存储配额 512 MiB，最多 4 个并发上传；失败的临时文件会清理。为保证历史对话可继续读取，成功上传的图片不自动删除，移除草稿缩略图也不删除 NAS 文件。用量满后由用户清理不再需要的图片并重启应用重新统计；本应用不会擅自清理已上传文件。进程重启后尚未发送的图片需重新选择上传；已发送的图片路径仍有效。草稿只保留在当前浏览器页面内存，刷新页面会丢失未发送草稿。
 
-首次连接仍采用短期单次票据；切换走已鉴权 WebSocket、逐次校验目标，使用 epoch 隔离旧输出/输入，不重做握手、不延长登录期限。ACK 按 32 KiB 或 40 ms 合并，尺寸变化按动画帧去重，保持原有输出背压。没有修改 tmux 的 window-size 策略。
+首次连接仍采用短期单次票据；切换走已鉴权 WebSocket、逐次校验目标，使用 epoch 隔离旧输出/输入，不重做握手、不延长连接的 24 小时期限。ACK 按 32 KiB 或 40 ms 合并，尺寸变化按动画帧去重，保持原有输出背压。没有修改 tmux 的 window-size 策略。
 
 ## 构建与测试
 
@@ -49,7 +49,7 @@
 cd /home/yao/code/nas/apps/web-terminal
 docker build --target test -t nas-web-terminal:test .
 docker run --rm --init --cap-drop ALL --security-opt no-new-privileges nas-web-terminal:test
-docker build -t nas-web-terminal:0.5.0 .
+docker build -t nas-web-terminal:0.5.1 .
 ```
 
 测试使用隔离 tmux server 和临时 RSA 测试密钥，覆盖错误/缺失 JWT、exp/nbf/iss/aud、身份、Origin/CSRF、重放、真实终端输入输出与 resize、断开与到期后会话存活。测试密钥不进入生产镜像；无环境变量免鉴权开关。
@@ -73,7 +73,7 @@ docker network rm nas-terminal-test
 
 ## 部署（按顺序）
 
-1. Cloudflare Zero Trust 创建独立 **Self-hosted** 应用，hostname 为 `rokano.org`，保护 **`/terminal` 与 `/terminal/*`**（同一应用的路径条目），覆盖首页、资源、接口和 WebSocket；不设 Bypass。Allow 精确沿用 home 的允许邮箱，使用独立 Audience，建议 session duration 15 分钟。不能仅保护 `/terminal/manage/*`，也不复用 home 的 Audience。
+1. Cloudflare Zero Trust 创建独立 **Self-hosted** 应用，hostname 为 `rokano.org`，保护 **`/terminal` 与 `/terminal/*`**（同一应用的路径条目），覆盖首页、资源、接口和 WebSocket；不设 Bypass。Allow 精确沿用 home 的允许邮箱，使用独立 Audience，Access session duration 按身份策略配置；它控制新的 HTTP 请求和握手，不决定已建立连接的 24 小时期限。不能仅保护 `/terminal/manage/*`，也不复用 home 的 Audience。
 2. 本目录 `.env` 权限设为 `600`，填写 Team Domain、该新应用 AUD、`CF_ACCESS_ALLOWED_ORIGIN=https://rokano.org` 和精确允许邮箱。Origin **不带 `/terminal`**。UID/GID 与宿主 tmux 用户一致，socket 目录需由该用户创建，不放宽权限。
 3. 以 `yao` 执行 `bash deploy/setup-ssh.sh`，创建专用密钥、固定主机公钥记录及私有 socket 目录；脚本不读取 `.env` 或既有私钥。随后由宿主 tmux 用户创建 `/home/yao/.nas-web-uploads`，权限 700（可用部署变量 `UPLOAD_DIR` 指定其他专用目录；容器返回给 Codex 的宿主路径会同步使用该值）。创建 `nas-terminal-front` 网络并执行 `docker compose up -d --build`。确认拒绝未配置请求后将 NPM 加入该网络，并在 NPM 的权威 Compose 中记录 external network。应用不发布宿主端口。
 4. 备份现有 NPM `origin-home.rokano.org` Host 的配置，在其 Advanced 中合并 [终端 location 模板](deploy/nginx-advanced.conf.example)，只新增精确 `/terminal` 与 `/terminal/` 子树，指向 `nas-web-terminal:3000`，**完整保留路径前缀**。不能替换该 Host 或覆盖已有 `/home`、`/` 路由；用 NPM 生成配置后运行 `nginx -t` 并验证既有服务。
@@ -112,7 +112,7 @@ tmux 连接只结束自己的 client；临时 SSH 则关闭对应登录 shell。
 
 `ssh-transport` 是只运行 socat 的独立非 root 容器：host 网络用于连接 NAS 的 `127.0.0.1:22`，仅监听私有 Unix socket，不监听 TCP，不挂载密钥目录，只挂载 transport 子目录。Web 服务仍在专用 bridge；不修改 UFW、不增加公网端口。两个容器随 Docker 自动重启。主机公钥从 NAS 本地公开文件固定，SSH 严格验签、禁用密码回退。
 
-临时 SSH 按正常 SSH 挂断语义结束登录 shell；主动断开立即关闭，网络无响应通常在两次 5 秒心跳内检测。JWT 到期/15 分钟上限也会关闭，不能用于需要断线保活的任务；这类任务使用 tmux。自行 nohup/disown 或新建 tmux 的进程遵循其自身保活规则。临时 SSH 中可以运行 Codex 终端，但网页图片提交仍限定于可核对前台进程的 tmux 窗格。
+临时 SSH 按正常 SSH 挂断语义结束登录 shell；主动断开立即关闭，WebSocket 每 15 秒 Ping，连续 90 秒未收到 Pong 才判定失联；SSH 每 15 秒保活，容忍 6 次无响应。服务端 24 小时上限也会关闭，不能用于需要断线保活的任务；这类任务使用 tmux。自行 nohup/disown 或新建 tmux 的进程遵循其自身保活规则。临时 SSH 中可以运行 Codex 终端，但网页图片提交仍限定于可核对前台进程的 tmux 窗格。
 
 回滚到 0.2.0：停止 `ssh-transport`，恢复备份的 Compose，执行 `docker compose up -d --no-build --remove-orphans`；不会杀 tmux。备份目录见操作记录。若撤销专用密钥，只删除 `~/.ssh/authorized_keys` 中末尾注释为 `nas-web-terminal-ephemeral` 的这一行，保留其他登录密钥，不直接覆盖其他并发变更。专用密钥目录可保留但不得入库。该回滚会结束所有网页临时 SSH。
 
@@ -147,10 +147,19 @@ tmux 会话向上滚动打开只读历史快照，再用滚轮浏览；点击“
 ```bash
 cd /home/yao/code/nas/apps/web-terminal
 sh deploy/setup-reader.sh
-docker build -t nas-web-terminal:0.5.0 .
+docker build -t nas-web-terminal:0.5.1 .
 docker compose up -d --no-build
 ```
 
 `setup-reader.sh` 依赖 Python 3.9+、tmux 和已配置的 SSH 通道；复制版本化读取器与安卓桥接模块到 `~/.local/share/nas-web-terminal/reader-0.5.0/`（目录 700、文件 600）。不重启 Codex、不发送按键。新版本更新应使用新目录并同步固定 SSH 命令，旧目录可保留用于回滚；部署本版本前重复运行会同步本版本文件。Python 测试：`python3 -m unittest discover -s apps/web-terminal/test -p 'test_*.py'`（仓库根目录执行）。
 
 Markdown 使用锁定版本的 [Marked](https://marked.js.org/using_advanced) 与 [DOMPurify](https://github.com/cure53/DOMPurify)，按其官方建议解析后净化。仅允许正文标签，原始 HTML 显示为文字，不加载远程图片、不执行脚本；只保留 HTTP(S) 链接并使用新窗口与 noopener/noreferrer。复制代码仅由点击触发，Permissions-Policy 为本源开放 clipboard-write，clipboard-read 仍禁用。鉴权、Origin、WS 有效期和其他服务入口不变。
+
+
+## 24 小时连接（0.5.1，2026-10-07）
+
+正常空闲连接依靠服务端 WebSocket Ping / 浏览器自动 Pong 保活，不向 shell 发送空命令。24 小时从 WebSocket 建立时计算，切换终端、输入和心跳均不续期；前端仅显示时:分:秒，不按空闲时间主动断开。
+
+HTTP 请求与新握手仍逐次验证有效 Access JWT、Origin 和一次性票据；已鉴权 WebSocket 使用独立固定连接期限。这是用户明确要求的终端特例，不适用于其他应用。JWT 过期后刷新会话列表、上传图片或重新连接仍可能要求登录，已连接终端继续使用。撤销 Access 身份不会即时终止已有连接，紧急处理可停止 web 容器。
+
+心跳不能保证断网、电脑休眠、浏览器关闭或 Cloudflare 边缘重启时不断线；临时 SSH 断线后关闭，需长期任务保活时使用 tmux。部署、验证边界及回滚见[24 小时连接实施记录](../../docs/operations/2026-10-07-网页终端24小时连接.md)。
