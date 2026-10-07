@@ -8,6 +8,7 @@
 | --- | --- |
 | [网络安全架构](docs/architecture/家庭NAS网络安全架构.md) | 入口、网络边界、远程维护与待验收事项 |
 | [服务与端口清单](docs/operations/服务与端口清单.md) | 当前服务、绑定地址、宿主机/容器端口、预留与释放状态；开启端口前必查，变更后更新 |
+| [Docker 宿主机升级验收](docs/operations/2026-10-07-Docker宿主机升级验收.md) | 用户手动升级 Docker / containerd 后的版本、39 个容器恢复与入口验证 |
 | [NAS 应用批量升级](docs/operations/2026-10-07-NAS应用批量升级.md) | 16 个应用 / 17 个容器升级、业务验证、私有备份、回滚与遗留告警 |
 | [剩余应用与数据库升级](docs/operations/2026-10-07-剩余应用与数据库升级.md) | Immich、Kuma 2、Redis、Playwright 配套升级，数据库恢复实测及宿主机排除范围 |
 | [PS5 游戏解压与传输准备](docs/operations/2026-10-07-PS5游戏解压与传输准备.md) | RAR 解压到 SSD 缓存、FTP 连接核对与内置存储传输方法 |
