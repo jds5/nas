@@ -12,6 +12,8 @@
 | [NAS 应用批量升级](docs/operations/2026-10-07-NAS应用批量升级.md) | 16 个应用 / 17 个容器升级、业务验证、私有备份、回滚与遗留告警 |
 | [剩余应用与数据库升级](docs/operations/2026-10-07-剩余应用与数据库升级.md) | Immich、Kuma 2、Redis、Playwright 配套升级，数据库恢复实测及宿主机排除范围 |
 | [PS5 游戏解压与传输准备](docs/operations/2026-10-07-PS5游戏解压与传输准备.md) | RAR 解压到 SSD 缓存、FTP 连接核对与内置存储传输方法 |
+| [剧集手动导入流程](docs/operations/剧集手动导入Sonarr与Jellyfin.md) | 独立下载器 → Sonarr → Jellyfin 的身份核对、复制校验、元数据、验收与回滚 |
+| [《母亲》《我的恐怖妻子》导入](docs/operations/2026-10-07-母亲与我的恐怖妻子导入.md) | Gopeed 20 集经 Sonarr 入库、Jellyfin 识别与原件保留 |
 | [《仁医》两季导入 Jellyfin](docs/operations/2026-10-07-仁医两季导入Jellyfin.md) | 22 集校验迁移、Sonarr 季集命名、电视剧库与本地元数据 |
 | [网盘下载器最终汇总](docs/operations/2026-10-07-网盘下载器最终汇总.md) | 最终分工、当前入口与任务、SSD 备份边界、百度残片清理和维护导航 |
 | [Gopeed 与 JDownloader 部署](docs/operations/2026-10-06-下载器部署.md) | 百度/夸克鉴权、SSD 备份排除及 JDownloader 卸载记录 |

@@ -10,6 +10,7 @@
 - 新增资料按用途归类并更新 README 导航；移动文件时同步修复相对链接。
 - 来源与未迁移内容见 `docs/migration/README.md`。Homeland 应用代码仍归原项目，生产配置仍需从 NAS / nas-config 核对，不用历史代码片段冒充可部署配置。
 - 实施“公开读、登录写”的实验 Web 项目时，阅读统一手册 `docs/security/CLOUDFLARE_ACCESS_IMPLEMENTATION.md`，按其中适用范围执行鉴权与验收，不另建重复规则文档。
+- 将网盘或其他独立下载器的剧集导入 Sonarr / Jellyfin 时，先阅读并遵循 [剧集手动导入流程](docs/operations/剧集手动导入Sonarr与Jellyfin.md)，现场核对剧集身份、完成状态、季集映射与挂载；默认复制保留原件，删除或覆盖另行确认授权。
 
 ## 工作方式
 
