@@ -49,7 +49,7 @@
 cd /home/yao/code/nas/apps/web-terminal
 docker build --target test -t nas-web-terminal:test .
 docker run --rm --init --cap-drop ALL --security-opt no-new-privileges nas-web-terminal:test
-docker build -t nas-web-terminal:0.5.2 .
+docker build -t nas-web-terminal:0.5.3 .
 ```
 
 测试使用隔离 tmux server 和临时 RSA 测试密钥，覆盖错误/缺失 JWT、exp/nbf/iss/aud、身份、Origin/CSRF、重放、真实终端输入输出与 resize、断开与到期后会话存活。测试密钥不进入生产镜像；无环境变量免鉴权开关。
@@ -147,7 +147,7 @@ tmux 会话向上滚动打开只读历史快照，再用滚轮浏览；点击“
 ```bash
 cd /home/yao/code/nas/apps/web-terminal
 sh deploy/setup-reader.sh
-docker build -t nas-web-terminal:0.5.2 .
+docker build -t nas-web-terminal:0.5.3 .
 docker compose up -d --no-build
 ```
 
@@ -173,3 +173,7 @@ HTTP 请求与新握手仍逐次验证有效 Access JWT、Origin 和一次性票
 tmux 的 1006、1012、1013、4000 异常关闭可按 1/3/8 秒延迟自动恢复，最多尝试三次；重新验证 Access、Origin、一次性票据及原会话身份。自动恢复保留原截止时间，不自动新建 tmux、重新运行 Codex 或重发指令。鉴权失效、会话变化、24 小时到期、主动断开和临时 SSH 不自动恢复；等待重连期间可点击断开取消。终端自身的设备查询应答仍正常发送。图片提交结果不确定时保留草稿并提示先核对。
 
 页面显示关闭原因、代码和连接编号；容器日志新增 terminal_opened / terminal_closed，只有随机编号、连接类型、期限、耗时、关闭原因/代码、缓冲字节、心跳年龄及终端退出码。不记录用户名、会话名、命令、输出、JWT 或 Cookie。详见[断连排查与优化](../../docs/operations/2026-10-07-网页终端断连排查与优化.md)。
+
+## 页面版本（0.5.3）
+
+主界面顶部显示当前加载前端的版本号（如 v0.5.3），构建时直接读取 package.json 的 version，避免手动维护重复版本。升级后刷新页面即可核对；旧页面显示旧版本时，刷新后再连接。

@@ -416,3 +416,5 @@ footer a { margin-left: auto; }
 .chat-table th { background: #233341; font-weight: 700; }
 .chat-table tr:nth-child(even) { background: #192631; }
 .chat-toolbar { position: sticky; top: 0; z-index: 1; padding: 8px 0; background: #10151b; border-bottom: 1px solid #26303c; }
+
+#app-version { font-size: 12px; white-space: nowrap; font-variant-numeric: tabular-nums; }

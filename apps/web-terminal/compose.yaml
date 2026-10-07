@@ -2,7 +2,7 @@ name: nas-terminal
 services:
   web:
     build: .
-    image: nas-web-terminal:0.5.2
+    image: nas-web-terminal:0.5.3
     container_name: nas_web_terminal
     depends_on: [ssh-transport]
     restart: unless-stopped
@@ -48,7 +48,7 @@ services:
       front:
         aliases: [nas-web-terminal]
   ssh-transport:
-    image: nas-web-terminal:0.5.2
+    image: nas-web-terminal:0.5.3
     container_name: nas_web_ssh_transport
     restart: unless-stopped
     init: true

@@ -1,3 +1,4 @@
+import { version } from '../package.json';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
@@ -6,6 +7,7 @@ import { conversationView } from './conversation.js';
 import { renderHistory } from './history.mjs';
 import { closeDescription, canRecover } from './connection.mjs';
 const $ = id => document.getElementById(id);
+$('app-version').textContent = `v${version}`;
 function preference(name, fallback) { try { return localStorage.getItem(name) ?? fallback; } catch { return fallback; } }
 function savePreference(name, value) { try { localStorage.setItem(name, String(value)); } catch {} }
 let fontSize = Math.min(24, Math.max(12, Number(preference('terminal-font', '16')) || 16));
