@@ -80,13 +80,14 @@ export function createApp({ config, keyResolver, tmux = new Tmux(), uploads, ssh
       }
       if (req.url !== '/terminal/manage/api/connections') return reply(res, 403, { error: '请求被拒绝' });
       const ref = await body(req);
+      if (ref.connectionExpires !== undefined && (!Number.isSafeInteger(ref.connectionExpires) || ref.connectionExpires <= Date.now())) return reply(res, 400, { error: '连接期限已到，请手动重新连接' });
       if (!await tmux.exists(ref)) return reply(res, 409, { error: '会话已变化，请刷新列表' });
       reap();
       if (tickets.size >= 64 || [...tickets.values()].filter(t => t.sub === user.sub).length >= 4 || userCount(user.sub) >= 4) {
         return reply(res, 429, { error: '连接过多，请关闭其他连接后重试' });
       }
       const ticket = randomBytes(32).toString('base64url');
-      tickets.set(ticket, { ref: { kind: ref.kind, id: ref.id, generation: ref.generation, ...(validSize(ref) ? { cols: ref.cols, rows: ref.rows } : {}) }, sub: user.sub, expires: Date.now() + 30000 });
+      tickets.set(ticket, { ref: { kind: ref.kind, id: ref.id, generation: ref.generation, ...(validSize(ref) ? { cols: ref.cols, rows: ref.rows } : {}) }, sub: user.sub, connectionExpires: ref.connectionExpires, expires: Date.now() + 30000 });
       return reply(res, 201, { ticket });
     } catch (err) {
       if (err.publicMessage) return reply(res, err.status, { error: err.publicMessage });
@@ -110,12 +111,12 @@ export function createApp({ config, keyResolver, tmux = new Tmux(), uploads, ssh
       const ticketKey = protocols.find(x => /^ticket\.[\w-]{43}$/.test(x))?.slice(7);
       reap();
       const ticket = tickets.get(ticketKey);
-      if (!ticket || ticket.sub !== user.sub) return reject(socket);
+      if (!ticket || ticket.sub !== user.sub || (ticket.connectionExpires !== undefined && ticket.connectionExpires <= Date.now())) return reject(socket);
       tickets.delete(ticketKey); // Consume before awaiting external work; cannot be replayed in a race.
       if (!await tmux.exists(ticket.ref) || socket.destroyed || peers.size >= 8 || userCount(user.sub) >= 4) return reject(socket);
       wsServer.handleUpgrade(req, socket, head, ws => {
         peers.set(ws, user.sub);
-        connectTerminal({ ws, ref: ticket.ref, user, tmux, peers, uploads, conversation, maxDurationMs });
+        connectTerminal({ ws, ref: ticket.ref, user, tmux, peers, uploads, conversation, maxDurationMs, connectionExpires: ticket.connectionExpires });
       });
     } catch { reject(socket); }
     finally { pendingUpgrades--; }

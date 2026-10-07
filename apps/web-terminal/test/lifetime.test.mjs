@@ -41,5 +41,5 @@ test('heartbeat tolerates brief loss, recovers with pong and cleans up after 90 
   for (let i = 0; i < 5; i++) t.mock.timers.tick(15000);
   assert.equal(ws.readyState, 1);
   t.mock.timers.tick(15000);
-  assert.equal(ws.terminated, true); assert.equal(peers.size, 0); assert.equal(kills(), 1);
+  assert.equal(ws.code, 4000); assert.equal(peers.size, 0); assert.equal(kills(), 1);
 });

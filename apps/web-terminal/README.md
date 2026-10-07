@@ -49,7 +49,7 @@
 cd /home/yao/code/nas/apps/web-terminal
 docker build --target test -t nas-web-terminal:test .
 docker run --rm --init --cap-drop ALL --security-opt no-new-privileges nas-web-terminal:test
-docker build -t nas-web-terminal:0.5.1 .
+docker build -t nas-web-terminal:0.5.2 .
 ```
 
 测试使用隔离 tmux server 和临时 RSA 测试密钥，覆盖错误/缺失 JWT、exp/nbf/iss/aud、身份、Origin/CSRF、重放、真实终端输入输出与 resize、断开与到期后会话存活。测试密钥不进入生产镜像；无环境变量免鉴权开关。
@@ -112,7 +112,7 @@ tmux 连接只结束自己的 client；临时 SSH 则关闭对应登录 shell。
 
 `ssh-transport` 是只运行 socat 的独立非 root 容器：host 网络用于连接 NAS 的 `127.0.0.1:22`，仅监听私有 Unix socket，不监听 TCP，不挂载密钥目录，只挂载 transport 子目录。Web 服务仍在专用 bridge；不修改 UFW、不增加公网端口。两个容器随 Docker 自动重启。主机公钥从 NAS 本地公开文件固定，SSH 严格验签、禁用密码回退。
 
-临时 SSH 按正常 SSH 挂断语义结束登录 shell；主动断开立即关闭，WebSocket 每 15 秒 Ping，连续 90 秒未收到 Pong 才判定失联；SSH 每 15 秒保活，容忍 6 次无响应。服务端 24 小时上限也会关闭，不能用于需要断线保活的任务；这类任务使用 tmux。自行 nohup/disown 或新建 tmux 的进程遵循其自身保活规则。临时 SSH 中可以运行 Codex 终端，但网页图片提交仍限定于可核对前台进程的 tmux 窗格。
+临时 SSH 按正常 SSH 挂断语义结束登录 shell；主动断开立即关闭，WebSocket 每 15 秒 Ping，连续 90 秒没有 Pong 或有效应用消息才判定失联；SSH 每 15 秒保活，容忍 6 次无响应。服务端 24 小时上限也会关闭，不能用于需要断线保活的任务；这类任务使用 tmux。自行 nohup/disown 或新建 tmux 的进程遵循其自身保活规则。临时 SSH 中可以运行 Codex 终端，但网页图片提交仍限定于可核对前台进程的 tmux 窗格。
 
 回滚到 0.2.0：停止 `ssh-transport`，恢复备份的 Compose，执行 `docker compose up -d --no-build --remove-orphans`；不会杀 tmux。备份目录见操作记录。若撤销专用密钥，只删除 `~/.ssh/authorized_keys` 中末尾注释为 `nas-web-terminal-ephemeral` 的这一行，保留其他登录密钥，不直接覆盖其他并发变更。专用密钥目录可保留但不得入库。该回滚会结束所有网页临时 SSH。
 
@@ -147,7 +147,7 @@ tmux 会话向上滚动打开只读历史快照，再用滚轮浏览；点击“
 ```bash
 cd /home/yao/code/nas/apps/web-terminal
 sh deploy/setup-reader.sh
-docker build -t nas-web-terminal:0.5.1 .
+docker build -t nas-web-terminal:0.5.2 .
 docker compose up -d --no-build
 ```
 
@@ -163,3 +163,13 @@ Markdown 使用锁定版本的 [Marked](https://marked.js.org/using_advanced) �
 HTTP 请求与新握手仍逐次验证有效 Access JWT、Origin 和一次性票据；已鉴权 WebSocket 使用独立固定连接期限。这是用户明确要求的终端特例，不适用于其他应用。JWT 过期后刷新会话列表、上传图片或重新连接仍可能要求登录，已连接终端继续使用。撤销 Access 身份不会即时终止已有连接，紧急处理可停止 web 容器。
 
 心跳不能保证断网、电脑休眠、浏览器关闭或 Cloudflare 边缘重启时不断线；临时 SSH 断线后关闭，需长期任务保活时使用 tmux。部署、验证边界及回滚见[24 小时连接实施记录](../../docs/operations/2026-10-07-网页终端24小时连接.md)。
+
+## 断连诊断与恢复（0.5.2，2026-10-07）
+
+浏览器与服务端每 15 秒交换应用层心跳，补充 WebSocket Ping/Pong；不向终端发送保活输入。服务端连续 90 秒未收到 Pong 或有效应用消息才关闭，浏览器连续 120 秒未收到服务端消息才主动关闭。窗口重新获得焦点、网络恢复或重新可见时立即探测，并给予浏览器恢复事件处理的时间。
+
+输出按 UTF-8 字节确认并分块传输，待确认窗口不超过 128 KiB，通过 PTY pause/resume 限制生产速度。单连接待发送与待确认数据合计上限 4 MiB，超过才以 4002 关闭；暂停期间继续处理心跳，不因普通渲染变慢直接断开。对已断网/休眠页面无法承诺永远不断线。
+
+tmux 的 1006、1012、1013、4000 异常关闭可按 1/3/8 秒延迟自动恢复，最多尝试三次；重新验证 Access、Origin、一次性票据及原会话身份。自动恢复保留原截止时间，不自动新建 tmux、重新运行 Codex 或重发指令。鉴权失效、会话变化、24 小时到期、主动断开和临时 SSH 不自动恢复；等待重连期间可点击断开取消。终端自身的设备查询应答仍正常发送。图片提交结果不确定时保留草稿并提示先核对。
+
+页面显示关闭原因、代码和连接编号；容器日志新增 terminal_opened / terminal_closed，只有随机编号、连接类型、期限、耗时、关闭原因/代码、缓冲字节、心跳年龄及终端退出码。不记录用户名、会话名、命令、输出、JWT 或 Cookie。详见[断连排查与优化](../../docs/operations/2026-10-07-网页终端断连排查与优化.md)。

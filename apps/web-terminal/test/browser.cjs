@@ -12,13 +12,20 @@ async function until(check) {
   try {
     for (const [label, viewport] of [['desktop', { width: 1440, height: 900 }], ['large-desktop', { width: 1920, height: 1080 }]]) {
       const page = await browser.newPage({ viewport, permissions: ['clipboard-read', 'clipboard-write'] });
+      await page.addInitScript(() => {
+        const Native = window.WebSocket;
+        window.testSockets = [];
+        window.WebSocket = class extends Native {
+          constructor(...args) { super(...args); window.testSockets.push(this); }
+        };
+      });
       const errors = []; page.on('pageerror', e => { errors.push(e.message); console.error('Page error:', e.message); });
-      let output = '', wsCount = 0, ticketRequests = 0, inputCount = 0;
+      let output = '', wsCount = 0, ticketRequests = 0, inputCount = 0, latestDeadline, heartbeatReplies = 0; const inputs = [];
       page.on('request', req => { if (req.url().endsWith('/api/connections')) ticketRequests++; });
       page.on('websocket', ws => {
         wsCount++;
-        ws.on('framereceived', ({ payload }) => { const m = JSON.parse(payload); if (m.type === 'output') output += m.data; });
-        ws.on('framesent', ({ payload }) => { if (JSON.parse(payload).type === 'input') inputCount++; });
+        ws.on('framereceived', ({ payload }) => { const m = JSON.parse(payload); if (m.type === 'output') output += m.data; if (m.type === 'ready') latestDeadline = m.expires; if (m.type === 'heartbeat-ack') heartbeatReplies++; });
+        ws.on('framesent', ({ payload }) => { const m = JSON.parse(payload); if (m.type === 'input') { inputCount++; inputs.push(m.data); } });
       });
       const choose = async name => {
         await page.getByRole('button', { name: new RegExp(name) }).click();
@@ -150,6 +157,20 @@ async function until(check) {
       await until(async () => await page.locator('#state').textContent() === '已连接');
       assert.equal(wsCount, 2); assert.deepEqual(errors, []);
       await page.screenshot({ path: `/artifacts/${label}-terminal.png` });
+      const originalDeadline = latestDeadline, sentBeforeRecovery = inputCount;
+      await until(() => heartbeatReplies > 0);
+      await page.evaluate(() => window.testSockets.at(-1).close(4000, 'heartbeat_timeout'));
+      await until(async () => wsCount === 3 && await page.locator('#state').textContent() === '已连接');
+      assert.equal(latestDeadline, originalDeadline, 'automatic recovery must preserve original deadline');
+      assert.ok(inputs.slice(sentBeforeRecovery).every(data => /^(?:\x1b\[[?>0-9;]*[cRn]|\x1b\](?:10|11);rgb:[0-9a-f/]+\x1b\\)$/.test(data)), 'only terminal device replies are allowed on recovery: ' + JSON.stringify(inputs.slice(sentBeforeRecovery)));
+      assert.match(await page.locator('#notice').textContent(), /已恢复原 tmux 会话/);
+      // A pending retry remains explicitly cancellable.
+      await page.evaluate(() => window.testSockets.at(-1).close(4000, 'heartbeat_timeout'));
+      await until(async () => await page.locator('#state').textContent() === '等待重连');
+      await page.locator('#detach').click();
+      await new Promise(r => setTimeout(r, 3300));
+      assert.equal(wsCount, 3);
+
       await page.locator('#new-ssh').click();
       await until(async () => await page.locator('#state').textContent() === '已连接' && await page.locator('#session-name').textContent() === '临时 SSH · NAS');
       assert.equal(await page.locator('#composer').isHidden(), true);
@@ -165,10 +186,14 @@ async function until(check) {
       await new Promise(r => setTimeout(r, 250));
       assert.equal(inputCount, sshInputBeforeWheel, 'SSH alternate wheel must not become arrow input');
 
-      await page.locator('#detach').click();
-      assert.equal(await page.locator('#notice').textContent(), '临时 SSH 已关闭。');
+      const sshConnections = wsCount;
+      await page.evaluate(() => window.testSockets.at(-1).close(4000, 'heartbeat_timeout'));
+      await until(async () => await page.locator('#state').textContent() === '已断开');
+      await new Promise(r => setTimeout(r, 1500));
+      assert.equal(wsCount, sshConnections, 'temporary SSH must not recreate a shell automatically');
+      assert.match(await page.locator('#notice').textContent(), /临时 SSH 已关闭/);
       await page.close();
-      console.log(`${label}: single-WebSocket switching / drafts / Enter / Ctrl+J / IME / images / clipboard / drop / flow-control / reconnect / read-only history / Markdown / table / pagination / safe links / copy-code / wheel-no-input / desktop controls PASS`);
+      console.log(`${label}: single-WebSocket switching / drafts / Enter / Ctrl+J / IME / images / clipboard / drop / flow-control / reconnect / heartbeat / auto-recovery-no-replay / fixed-deadline / cancel-retry / SSH-no-recovery / read-only history / Markdown / table / pagination / safe links / copy-code / wheel-no-input / desktop controls PASS`);
     }
   } finally { await browser.close(); }
 })().catch(error => { console.error('Browser acceptance failed:', error.stack); process.exit(1); });

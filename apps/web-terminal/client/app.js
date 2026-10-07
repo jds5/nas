@@ -4,6 +4,7 @@ import '@xterm/xterm/css/xterm.css';
 import './style.css';
 import { conversationView } from './conversation.js';
 import { renderHistory } from './history.mjs';
+import { closeDescription, canRecover } from './connection.mjs';
 const $ = id => document.getElementById(id);
 function preference(name, fallback) { try { return localStorage.getItem(name) ?? fallback; } catch { return fallback; } }
 function savePreference(name, value) { try { localStorage.setItem(name, String(value)); } catch {} }
@@ -22,6 +23,8 @@ let terminalMode = true, manualComposer = false;
 let expires = 0, historyOpen = false, historyTimer, historyMode = 'terminal';
 const chat = conversationView({ send: sendFrame, connected });
 let pendingAck = 0, ackTimer, submission;
+let heartbeatTimer, retryTimer, retryAttempts = 0, recoveryDeadline = 0, lastReceived = 0, connectionId = '', uncertainSend = false;
+function cancelRecovery() { clearTimeout(retryTimer); retryTimer = undefined; retryAttempts = 0; recoveryDeadline = 0; }
 const key = ref => ref && `${ref.id}|${ref.generation}`;
 function draft(ref = selected) {
   if (!drafts.has(key(ref))) drafts.set(key(ref), { text: '', files: [] });
@@ -33,7 +36,7 @@ function updateState(text) {
   if (text) $('state').textContent = text;
   const active = connected(), d = draft();
   $('connection-dot').classList.toggle('idle', !active);
-  $('detach').disabled = !socket && !connecting;
+  $('detach').disabled = !socket && !connecting && !retryTimer;
   $('open-history').disabled = !active || selected?.kind === 'ssh';
   $('send').disabled = !active || Boolean(submission) || d.files.some(x => !x.uploaded || x.uploading);
   $('attach').disabled = !active || Boolean(submission) || d.files.length >= 4;
@@ -149,9 +152,9 @@ applyFont(); sidebar(preference('terminal-sidebar', 'open') === 'closed');
 async function api(path, payload) {
   const response = await fetch(path, { method: payload ? 'POST' : 'GET', credentials: 'same-origin', redirect: 'manual', signal: AbortSignal.timeout(15000),
     headers: payload ? { 'Content-Type': 'application/json', 'X-Nas-Csrf-Origin': location.origin } : {}, body: payload ? JSON.stringify(payload) : undefined });
-  if (response.status === 403 || response.type === 'opaqueredirect') throw new Error('登录已失效，请刷新页面重新通过 Access 登录。');
+  if (response.status === 403 || response.type === 'opaqueredirect') throw Object.assign(new Error('登录已失效，请刷新页面重新通过 Access 登录。'), { status: 403 });
   const data = await response.json();
-  if (!response.ok) throw new Error(data.error || '请求失败，请重试。');
+  if (!response.ok) throw Object.assign(new Error(data.error || '请求失败，请重试。'), { status: response.status });
   return data;
 }
 function renderSessions() {
@@ -179,10 +182,12 @@ function ack(ws, forEpoch, bytes) {
   const flush = () => { if (pendingAck && socket === ws && epoch === forEpoch) sendFrame({ type: 'ack', bytes: pendingAck }); clearAck(); };
   if (pendingAck >= 32768) flush(); else if (!ackTimer) ackTimer = setTimeout(flush, 40);
 }
-function detach() {
+function detach({ keepRecovery = false } = {}) {
+  clearInterval(heartbeatTimer); heartbeatTimer = undefined;
+  if (!keepRecovery) cancelRecovery();
   closeHistory(false); expires = 0;
   revision++; switchQueued = undefined; connecting = ready = false; clearAck();
-  const old = socket; socket = undefined; old?.close();
+  const old = socket; socket = undefined; connectionId = ''; old?.close();
   if (submission) { clearTimeout(submission.timer); submission = undefined; notify('发送结果尚未确认，草稿已保留。请查看终端后决定是否重发。'); }
   updateState('已断开');
 }
@@ -193,7 +198,8 @@ function select(session) {
   selected = session; manualComposer = false; setMode('terminal'); $('draft').value = draft().text; $('session-name').textContent = session.name;
   renderSessions(); renderAttachments();
 }
-async function connect(session) {
+async function connect(session, { automatic = false } = {}) {
+  if (!automatic) { cancelRecovery(); uncertainSend = false; }
   if (submission) { notify('正在确认发送结果，请稍后切换会话。'); return; }
   if (connecting && socket?.readyState === WebSocket.OPEN) { switchQueued = session; return; }
   if (connected() && key(selected) === key(session)) { focusInput(); return; }
@@ -202,20 +208,35 @@ async function connect(session) {
     const s = size(); lastSize = `${s.cols}x${s.rows}`;
     updateState('切换中…'); notify(); sendFrame({ type: 'switch', ref: session, ...s }); return;
   }
-  detach(); select(session); connecting = true; epoch = 0;
+  detach({ keepRecovery: automatic }); select(session); connecting = true; epoch = 0;
   const current = revision; updateState('连接中…'); notify();
   const s = size(); lastSize = `${s.cols}x${s.rows}`; term.reset();
   try {
-    const { ticket } = await api('/terminal/manage/api/connections', { kind: session.kind, id: session.id, generation: session.generation, ...s });
+    const { ticket } = await api('/terminal/manage/api/connections', { kind: session.kind, id: session.id, generation: session.generation, ...s, ...(automatic ? { connectionExpires: recoveryDeadline } : {}) });
     if (current !== revision) return;
     const url = new URL('/terminal/manage/ws', location.href); url.protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
     const ws = new WebSocket(url, ['nas-terminal.v1', `ticket.${ticket}`]); socket = ws;
+    ws.onopen = () => {
+      if (socket !== ws) return;
+      lastReceived = Date.now();
+      heartbeatTimer = setInterval(() => {
+        if (socket !== ws || ws.readyState !== WebSocket.OPEN) return;
+        if (Date.now() - lastReceived > 120000) { ws.close(4000, 'heartbeat_timeout'); return; }
+        sendFrame({ type: 'heartbeat' });
+      }, 15000);
+      sendFrame({ type: 'heartbeat' });
+    };
     ws.onmessage = event => {
       if (socket !== ws) return;
-      const msg = JSON.parse(event.data);
+      let msg;
+      try { msg = JSON.parse(event.data); } catch { ws.close(1002, 'invalid_server_message'); return; }
+      lastReceived = Date.now();
+      if (msg.type === 'heartbeat') { sendFrame({ type: 'heartbeat-ack' }); return; }
+      if (msg.type === 'heartbeat-ack') return;
       if (msg.epoch !== epoch) return;
       if (msg.type === 'ready') {
-        expires = msg.expires; ready = true; connecting = false; updateState('已连接'); focusInput(); resize();
+        expires = msg.expires; connectionId = msg.connectionId || ''; ready = true; connecting = false; updateState('已连接'); focusInput(); resize();
+        if (automatic) notify(uncertainSend ? '已恢复原 tmux 会话；上次图片消息结果未确认，请先核对，未自动重发。' : '已恢复原 tmux 会话，没有重发指令。');
         const next = switchQueued; switchQueued = undefined;
         if (next) connect(next);
       } else if (msg.type === 'mode') {
@@ -240,12 +261,45 @@ async function connect(session) {
     };
     ws.onclose = event => {
       if (socket !== ws) return;
-      detach();
-      notify(selected?.kind === 'ssh' ? '临时 SSH 已关闭；重新连接将新建 shell。' : event.code === 4001 ? '连接到期或会话已变化，请重新连接。后台任务继续运行。' : '连接已断开，草稿已保留；后台任务继续运行。若刚发送消息，请先核对终端再重发。');
+      const deadline = recoveryDeadline || expires, ref = selected;
+      uncertainSend ||= Boolean(submission);
+      const detail = `${closeDescription(event.code, event.reason)}（${event.code}${connectionId ? '，编号 ' + connectionId.slice(0, 8) : ''}）`;
+      detach({ keepRecovery: true });
+      if (canRecover(ref, event.code, deadline, retryAttempts)) {
+        recoveryDeadline = deadline;
+        scheduleRecovery(ref, detail);
+      } else {
+        cancelRecovery();
+        notify(detail + (ref?.kind === 'ssh' ? '；临时 SSH 已关闭，重连会新建 shell。' : '；草稿已保留，tmux 任务继续运行。请重新连接；发送结果不确定时先核对再重发。'));
+      }
     };
     ws.onerror = () => { if (socket === ws) notify('无法连接，请重试或刷新页面重新登录。'); };
-  } catch (e) { if (current === revision) { connecting = false; updateState('连接失败'); notify(e.message); } }
+  } catch (e) { if (current === revision) {
+    connecting = false; updateState('连接失败'); notify(e.message);
+    if (automatic && ![400, 401, 403, 409].includes(e.status) && canRecover(session, 1006, recoveryDeadline, retryAttempts)) scheduleRecovery(session, '恢复连接失败');
+    else if (automatic) { cancelRecovery(); notify('自动恢复未成功，请手动重新连接；若登录已过期，请刷新页面登录。没有重发指令。'); }
+  } }
 }
+function scheduleRecovery(ref, detail) {
+  const delay = [1000, 3000, 8000][retryAttempts++];
+  updateState('等待重连');
+  notify(`${detail}；将在 ${delay / 1000} 秒后恢复原 tmux 会话（${retryAttempts}/3），不重发指令。`);
+  retryTimer = setTimeout(() => {
+    retryTimer = undefined;
+    if (selected !== ref || Date.now() >= recoveryDeadline) { cancelRecovery(); updateState('已断开'); return; }
+    void connect(ref, { automatic: true });
+  }, delay);
+  updateState();
+}
+function probeConnection() {
+  if (socket?.readyState === WebSocket.OPEN) {
+    lastReceived = Date.now(); // Give queued browser events a chance after resume.
+    sendFrame({ type: 'heartbeat' });
+  }
+}
+window.addEventListener('online', probeConnection);
+window.addEventListener('focus', probeConnection);
+document.addEventListener('visibilitychange', () => { if (!document.hidden) probeConnection(); });
 function clearDraft() {
   const d = draft(); for (const item of d.files) URL.revokeObjectURL(item.preview);
   d.files = []; d.text = ''; $('draft').value = ''; renderAttachments(); notify();

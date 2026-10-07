@@ -323,3 +323,18 @@ test('JWT expiry blocks new HTTP requests and upgrades while established connect
     await waitFor(() => messages.some(m => m.type === 'history'));
   } finally { ws.close(); await once(ws, 'close'); }
 });
+
+test('recovery deadline only shortens an authenticated connection and cannot extend its 24h cap', { timeout: 8000 }, async () => {
+  const assertion = await token(), ref = (await tmux.list())[0];
+  for (const value of ['tomorrow', Date.now() - 1]) {
+    assert.equal((await request('/terminal/manage/api/connections', { assertion, payload: { ...ref, connectionExpires: value } })).status, 400);
+  }
+  const shortened = wsConnect(assertion, await reservation(assertion, { ...ref, connectionExpires: Date.now() + 500 }));
+  assert.equal((await once(shortened, 'close'))[0], 4001);
+  const before = Date.now();
+  const capped = wsConnect(assertion, await reservation(assertion, { ...ref, connectionExpires: Date.now() + 7 * 86400000 }));
+  try {
+    const ready = await new Promise(resolve => capped.on('message', raw => { const m = JSON.parse(raw); if (m.type === 'ready') resolve(m); }));
+    assert.ok(ready.expires >= before + 86400000 && ready.expires <= Date.now() + 86400000);
+  } finally { capped.close(); await once(capped, 'close'); }
+});
