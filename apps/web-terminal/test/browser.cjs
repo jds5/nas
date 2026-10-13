@@ -34,7 +34,7 @@ async function until(check) {
       await page.goto('http://terminal-fixture:3000/terminal');
       // The preferred agent (default Claude Code) is listed first; every agent session is labelled.
       await until(async () => await page.locator('#sessions .session').count() === 4);
-      await page.screenshot({ path: `/artifacts/${label}-empty.png` });
+      await page.screenshot({ path: `/artifacts/${label}-empty.png` }); await page.emulateMedia({ colorScheme: 'dark' }); await page.waitForTimeout(400); await page.screenshot({ path: `/artifacts/${label}-empty-dark.png` }); await page.emulateMedia({ colorScheme: 'light' }); await page.waitForTimeout(400);
       assert.match(await page.locator('#sessions .session').first().textContent(), /claude-chat.*Claude Code/);
       await page.locator('#agent-codex').click();
       assert.match(await page.locator('#sessions .session').first().textContent(), /codex-images.*Codex/);
@@ -99,7 +99,7 @@ async function until(check) {
       assert.equal(await page.locator('#chat-messages a').count(), 1);
       assert.equal(await page.locator('#chat-messages a').getAttribute('rel'), 'noopener noreferrer');
       assert.ok((await page.locator('.chat-message.user').textContent()).includes('**保持原文**'));
-      await page.screenshot({ path: `/artifacts/${label}-markdown.png` });
+      await page.screenshot({ path: `/artifacts/${label}-markdown.png` }); await page.emulateMedia({ colorScheme: 'dark' }); await page.waitForTimeout(400); await page.screenshot({ path: `/artifacts/${label}-markdown-dark.png` }); await page.emulateMedia({ colorScheme: 'light' }); await page.waitForTimeout(400);
       await page.locator('#chat-older').click();
       await until(async () => (await page.locator('#chat-messages').textContent()).includes('OLD_PAGE'));
       await page.locator('#chat-newer').click();

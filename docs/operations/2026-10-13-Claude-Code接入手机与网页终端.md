@@ -55,3 +55,4 @@
 - 网页终端 0.6.2：静态资源压缩与 ETag 重验证、积压输出合帧、会话列表单次查询、上传索引过期清理、前端标注与列表刷新修正（详见[网页终端 README](../../apps/web-terminal/README.md)）。容器测试 34 项、读取器 6 项、Playwright 两种桌面尺寸通过；已部署，两个容器 healthy，源站匿名 403（`no-store`）、公网匿名 302，端口绑定不变。回滚为改回 0.6.1 镜像。
 - 2026-10-14 安卓 0.6.1：Material 3 界面整理与传输/轮询优化（详见[App README](../../apps/android/README.md)）。65 项 Python（含隔离 tmux）与 24 项 Kotlin（含 loopback SSH 实际安装缓存后上传 1 MiB）通过；Debug/Release 构建与 Lint（0 警告）通过；无模拟器，界面未实机查看。APK 3,444,813 字节，SHA-256 `2a0ab1d2036356fdd293c59cfc0f360de22940e2e210f803b3380d38ed818058`，签名同前；LAN 下载页已切换，HTTP 下载一致，旧 unit 备份为 `nas-app-download.service.before-0.6.1`。
 - 同日用户反馈下载页无法访问：服务端监听与 HTTP 均正常，原因为手机 Android 本地网络权限，授权后恢复，未修改服务器。
+- 2026-10-14 网页终端 0.6.3：按用户反馈改为与安卓一致的 Material 3 现代化界面（替换 0.6.1 终端风格），跟随系统浅色/深色。容器测试 34 项与 Playwright 两种桌面尺寸（含深色截图）通过；已部署，容器 healthy，源站匿名 403、公网匿名 302，端口绑定不变。回滚为改回 0.6.2 镜像。

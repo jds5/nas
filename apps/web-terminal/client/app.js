@@ -13,7 +13,7 @@ function savePreference(name, value) { try { localStorage.setItem(name, String(v
 let fontSize = Math.min(24, Math.max(12, Number(preference('terminal-font', '16')) || 16));
 const term = new Terminal({ cursorBlink: true, fontSize, scrollback: 3000,
   fontFamily: '"JetBrains Mono", "Cascadia Code", "SFMono-Regular", Consolas, "Liberation Mono", monospace',
-  theme: { background: '#07090b', foreground: '#d3ddd8', cursor: '#3ee08f', cursorAccent: '#07090b', selectionBackground: '#1f5c43' },
+  theme: { background: '#111814', foreground: '#dee4de', cursor: '#95d5b3', cursorAccent: '#111814', selectionBackground: '#2f5443' },
   linkHandler: { activate() {} }, allowProposedApi: false });
 const fit = new FitAddon(); term.loadAddon(fit);
 const encoder = new TextEncoder();
@@ -176,7 +176,7 @@ function renderSessions() {
   $('sessions').replaceChildren();
   const rank = s => s.agent === agentPreference ? 0 : s.agent ? 1 : 2;
   for (const session of [...sessions].sort((a, b) => rank(a) - rank(b))) {
-    const button = document.createElement('button'); button.className = 'session';
+    const button = document.createElement('button'); button.className = 'session'; button.dataset.agent = session.agent || '';
     button.classList.toggle('selected', key(selected) === key(session));
     const name = document.createElement('strong'); name.textContent = session.name;
     const detail = document.createElement('span'); detail.textContent = `${session.agent ? AGENT_NAMES[session.agent] + ' · ' : ''}${session.windows} 个窗口`;

@@ -49,7 +49,7 @@
 cd /home/yao/code/nas/apps/web-terminal
 docker build --target test -t nas-web-terminal:test .
 docker run --rm --init --cap-drop ALL --security-opt no-new-privileges nas-web-terminal:test
-docker build -t nas-web-terminal:0.6.2 .
+docker build -t nas-web-terminal:0.6.3 .
 ```
 
 测试使用隔离 tmux server 和临时 RSA 测试密钥，覆盖错误/缺失 JWT、exp/nbf/iss/aud、身份、Origin/CSRF、重放、真实终端输入输出与 resize、断开与到期后会话存活。测试密钥不进入生产镜像；无环境变量免鉴权开关。
@@ -186,10 +186,6 @@ Claude Code 对话由安卓桥接同一逻辑读取：按 `~/.claude/sessions/<p
 
 部署：`sh deploy/setup-reader.sh`，`docker build -t nas-web-terminal:0.6.0 .`，`docker compose up -d --no-build`。回滚：将 `compose.yaml` 的两处镜像改回 `nas-web-terminal:0.5.3` 后 `docker compose up -d --no-build`（0.5.3 镜像固定读取 `reader-0.5.0`）。实施与验证见[运维记录](../../docs/operations/2026-10-13-Claude-Code接入手机与网页终端.md)。
 
-## 终端风格界面（0.6.1，2026-10-13）
-
-界面整体改为终端风格：系统等宽字体（CSP 只允许同源字体，不加载外部字体）、直角细线边框、荧光绿主色、琥珀色警告、青色链接；顶栏模仿 tmux 状态行，会话列表用 `❯` 标记当前会话、`●` 标记偏好智能体，底栏为 vim 风格模式块；空状态为网格背景与闪烁光标；对话阅读改为日志式（作者分隔线、用户 `❯` / 命令 `$`、Markdown 标题保留 `#` 前缀）。xterm 配色同步更新。只改样式与少量静态文字，元素 ID、按钮名称、交互和安全行为不变；遵循系统“减少动态效果”设置。回滚：`compose.yaml` 镜像改回 `nas-web-terminal:0.6.0` 后 `docker compose up -d --no-build`。
-
 ## 请求效率与逻辑修正（0.6.2，2026-10-13）
 
 - **静态资源**：首次请求时读入并异步压缩（Brotli/gzip）后常驻内存，按 `Accept-Encoding` 返回，带 ETag 与 `Cache-Control: private, no-cache`；浏览器每次仍经 Access 验签后重新验证，未变化时返回无正文的 304。首次加载从约 474 KB 降至约 112 KB（Brotli），之后基本只有 304。鉴权失败、API 与错误响应仍为 `no-store`。
@@ -199,3 +195,7 @@ Claude Code 对话由安卓桥接同一逻辑读取：按 `~/.claude/sessions/<p
 - **前端**：前台智能体变化时直接更新会话栏标注；连接返回 409（会话已变化）时自动刷新列表；标签页离开超过 60 秒后返回时刷新一次列表。
 
 回滚：`compose.yaml` 镜像改回 `nas-web-terminal:0.6.1` 后 `docker compose up -d --no-build`。
+
+## 现代化界面（0.6.3，2026-10-14）
+
+按用户反馈替换 0.6.1 的终端风格，与安卓端统一为 Material 3 风格：与 App 相同的绿色种子配色，跟随系统浅色/深色；系统无衬线字体，药丸形按钮（主操作填充、常规为色调按钮、次要为文字按钮）；会话栏为导航抽屉式列表，左侧圆形头像区分 Claude Code（CC）、Codex（Cx）与普通终端，智能体开关为分段按钮；工作区为圆角卡片，实时终端在两种主题下都保持深色；对话阅读为与 App 一致的气泡/卡片布局。只改样式、静态文字和会话按钮的 `data-agent` 标记，交互与安全行为不变。Playwright 验收新增深色模式截图。回滚：镜像改回 `nas-web-terminal:0.6.2`。
