@@ -6,6 +6,7 @@
 
 | 文档 | 内容 |
 | --- | --- |
+| [Claude Code 接入手机与网页终端](docs/operations/2026-10-13-Claude-Code接入手机与网页终端.md) | 两端识别 Claude Code / Codex、智能体切换（默认 Claude Code）、验证、部署与回滚 |
 | [NAS 可升级服务检查](docs/operations/2026-10-10-NAS可升级服务检查.md) | Kuma、Playwright、pgvector 与镜像构建候选，数据库生命周期和宿主机待更新包 |
 | [10 月 10 日 NAS 巡检](docs/operations/2026-10-10-NAS巡检.md) | 主机与磁盘健康、容器和入口验证、OneDrive 备份失败及业务告警 |
 | [Immich 与机器学习升级](docs/operations/2026-10-09-Immich与机器学习升级.md) | 3.3.1、OpenVINO / v2 优化模型、数据库恢复验证与回滚 |
@@ -36,11 +37,11 @@
 | [设备与运维记录](docs/operations/运维记录.md) | 硬件、存储、备份链、NPM/应用修复与版本记录 |
 | [备份盘休眠](docs/operations/备份盘休眠.md) | 磁盘身份、自纠正 cron、监控与待核验效果 |
 | [Android 安全诊断](docs/security/ANDROID_APP_SECURITY_REVIEW.md) | 安全审查、会话启动边界、测试证据与剩余风险 |
-| [Android 控制端](apps/android/README.md) | 独立手机 App、构建安装、安全边界与当前限制 |
+| [Android 控制端](apps/android/README.md) | 独立手机 App（Claude Code / Codex）、构建安装、安全边界与当前限制 |
 | [网页终端安全审查](docs/security/WEB_TERMINAL_SECURITY_REVIEW.md) | 同域风险、NAS 权限边界、撤销与剩余风险 |
 | [网页终端 24 小时连接](docs/operations/2026-10-07-网页终端24小时连接.md) | 服务端固定连接期限、心跳容错、JWT 边界与部署回滚 |
 | [网页终端断连优化](docs/operations/2026-10-07-网页终端断连排查与优化.md) | 应用心跳、输出流控、有限自动重连、关闭诊断与回滚 |
-| [NAS 网页终端](apps/web-terminal/README.md) | 整站 Access 保护的 tmux / 临时 SSH、Codex Markdown 对话与部署验证 |
+| [NAS 网页终端](apps/web-terminal/README.md) | 整站 Access 保护的 tmux / 临时 SSH、Claude Code / Codex Markdown 对话与部署验证 |
 | [网页终端实施记录](docs/operations/2026-09-29-NAS网页终端.md) | 内部部署、真实 PTY 与浏览器测试、待完成的公网配置 |
 | [手机外网连接与 SSH 配置](docs/operations/手机外网连接与SSH密钥配置.md) | 本机连接信息、手机专用密钥、公网入口与 key-only 步骤 |
 | [手机接入现有 tmux 规划](docs/operations/手机接入现有tmux规划.md) | 当前会话定位、手机接入步骤与远控界面选项 |
