@@ -68,7 +68,7 @@ class LifecycleTests(unittest.TestCase):
         preview = lifecycle.handle({'action': 'prepare', 'mode': 'existing', 'path': 'demo', 'args': '--yolo'})
         self.assertEqual(preview['proposal']['session'], 'demo')
         self.assertEqual(preview['proposal']['path'], str(self.code / 'demo'))
-        with patch.object(lifecycle, 'codex_binary', side_effect=lifecycle.Refused('找不到 Codex')):
+        with patch.object(lifecycle, 'agent_binary', side_effect=lifecycle.Refused('找不到 Codex')):
             with self.assertRaises(lifecycle.Refused):
                 lifecycle.handle({'action': 'prepare', 'mode': 'empty', 'path': 'missing'})
         self.assertFalse((self.code / 'missing').exists())
@@ -117,6 +117,46 @@ class LifecycleTests(unittest.TestCase):
         self.assertEqual(args_file.read_text().splitlines(), ['--yolo', 'resume', ident])
 
     @unittest.skipUnless(os.environ.get('NAS_TMUX_TESTS') == '1', 'Set NAS_TMUX_TESTS=1')
+    def test_claude_history_lists_transcripts_and_resumes_exact_uuid(self):
+        project = self.code / 'demo'
+        project.mkdir()
+        claude_home = self.root / '.claude'
+        patcher = patch.object(lifecycle, 'CLAUDE_HOME', claude_home)
+        patcher.start(); self.addCleanup(patcher.stop)
+        ident = str(uuid.uuid4())
+        transcripts = claude_home / 'projects' / '-code-demo'
+        transcripts.mkdir(parents=True)
+        (transcripts / (ident + '.jsonl')).write_text(json.dumps({'type': 'mode', 'sessionId': ident}) + '\n' + json.dumps({
+            'type': 'user', 'sessionId': ident, 'cwd': str(project), 'timestamp': '2026-10-13T00:00:00Z',
+            'message': {'role': 'user', 'content': 'hi'}}) + '\n')
+        (transcripts / 'not-a-session.jsonl').write_text('{}\n')
+        threads = lifecycle.handle({'action': 'threads', 'agent': 'claude'})['threads']
+        self.assertEqual(threads, [{'id': ident, 'path': str(project), 'created': '2026-10-13T00:00:00Z'}])
+        self.assertEqual(lifecycle.handle({'action': 'threads'})['threads'], [])  # Old clients: Codex only.
+        with self.assertRaises(lifecycle.Refused):
+            lifecycle.handle({'action': 'threads', 'agent': 'other'})
+        args_file = self.root / 'claude-args'
+        fake = self.root / '.local' / 'bin' / 'claude'
+        fake.write_text('#!/bin/sh\npwd > ' + str(args_file) + '\nprintf "%s\\n" "$@" >> ' + str(args_file) + '\nsleep 5\n')
+        fake.chmod(0o755)
+        request = {'action': 'prepare', 'mode': 'restore_new', 'session': 'resumed', 'thread': ident,
+                   'agent': 'claude', 'args': '--dangerously-skip-permissions'}
+        with patch.object(lifecycle.shutil, 'which', return_value=None):
+            preview = lifecycle.handle(request)
+            self.assertEqual((preview['proposal']['agent'], preview['proposal']['binary']), ('claude', str(fake)))
+            result = lifecycle.handle(dict(request, action='start', operation=str(uuid.uuid4()), digest=preview['digest']))
+        self.assertEqual(result['status'], 'started', result.get('error'))
+        for _ in range(30):
+            if args_file.exists() and len(args_file.read_text().splitlines()) == 4:
+                break
+            time.sleep(.05)
+        self.assertEqual(args_file.read_text().splitlines(), [str(project), '--dangerously-skip-permissions', '--resume', ident])
+        # A session id still registered by a live Claude Code process is never resumed twice.
+        with patch.object(lifecycle, 'claude_session_running', return_value=True):
+            with self.assertRaises(lifecycle.Refused):
+                lifecycle.handle(dict(request, session='again'))
+
+    @unittest.skipUnless(os.environ.get('NAS_TMUX_TESTS') == '1', 'Set NAS_TMUX_TESTS=1')
     def test_idle_pane_starts_new_codex_with_arguments_and_local_binary(self):
         project = self.code / 'work_doc'
         project.mkdir()
@@ -136,7 +176,7 @@ class LifecycleTests(unittest.TestCase):
                     time.sleep(.1)
             else:
                 self.fail('测试 shell 未就绪')
-            self.assertEqual(preview['proposal']['codex'], str(fake))
+            self.assertEqual(preview['proposal']['binary'], str(fake))
             result = lifecycle.handle(dict(request, action='start', operation=str(uuid.uuid4()), digest=preview['digest']))
         self.assertEqual(result['status'], 'started', result.get('error'))
         for _ in range(30):

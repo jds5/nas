@@ -5,6 +5,7 @@ import android.net.Uri
 import org.json.JSONObject
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import androidx.core.content.edit
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -84,12 +85,14 @@ data class RemoteState(
     val lifecycleOperation: String? = null,
     val lifecycleBusy: Boolean = false,
     val lifecycleMachineStatus: String = "",
-
-
+    val agent: String = Agents.DEFAULT,
+    val skillPrefix: String = "$",
 )
 
 class RemoteViewModel(application: Application) : AndroidViewModel(application) {
     private val vault = ProfileVault(application)
+    // Non-secret UI preference: which agent new sessions use and which panes are listed first.
+    private val settings = application.getSharedPreferences("settings", android.content.Context.MODE_PRIVATE)
     private val sessionVault = SessionVault(application)
     private val storage = Mutex()
     private var persistJob: Job? = null
@@ -106,7 +109,7 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
     private fun memoKey(binding: String) = profileId() + ":" + binding
     private fun lastMemo() = memos.values.lastOrNull { it.profile == profileId() && !it.binding.startsWith("terminal:") }
 
-    private val mutable = MutableStateFlow(RemoteState())
+    private val mutable = MutableStateFlow(RemoteState(agent = settings.getString("agent", null)?.takeIf { it in Agents.names } ?: Agents.DEFAULT))
     val state = mutable.asStateFlow()
     private val io = Mutex()
     private var client: SshTmuxClient? = null
@@ -311,6 +314,12 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
             } finally { key.fill(0); pass.fill(0) }
         }
     }
+    fun chooseAgent(value: String) {
+        if (value !in Agents.names || state.value.lifecycleBusy) return
+        settings.edit { putString("agent", value) }
+        mutable.update { it.copy(agent = value, lifecycleThreads = if (it.agent == value) it.lifecycleThreads else emptyList()) }
+        state.value.takeIf { it.lifecycleOpen && it.lifecycleMode.startsWith("restore") }?.let { openLifecycle(it.lifecycleMode, it.lifecyclePane) }
+    }
     fun openLifecycle(mode: String, pane: Pane? = null) {
         if (!state.value.connected || state.value.busy || state.value.lifecycleBusy) return
         mutable.update { it.copy(lifecycleOpen = true, lifecycleMode = mode, lifecyclePane = pane,
@@ -322,7 +331,7 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
             viewModelScope.launch {
                 try {
                     val result = withContext(Dispatchers.IO) { io.withLock {
-                        JSONObject(remote.lifecycle(JSONObject().put("action", "threads").toString()))
+                        JSONObject(remote.lifecycle(JSONObject().put("action", "threads").put("agent", state.value.agent).toString()))
                     } }
                     if (token == epoch && result.optBoolean("ok")) {
                         val array = result.getJSONArray("threads")
@@ -346,7 +355,7 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
         val request = JSONObject().put("action", "prepare").put("mode", s.lifecycleMode)
             .put("session", if (s.lifecycleMode in listOf("restore_pane", "new_pane")) s.lifecyclePane?.session.orEmpty() else session.trim())
             .put("path", path.trim()).put("thread", thread.trim()).put("url", url.trim()).put("branch", branch.trim()).put("pull", pull)
-            .put("args", args.trim())
+            .put("args", args.trim()).put("agent", s.agent)
         val token = epoch
         mutable.update { it.copy(lifecycleBusy = true, lifecycleMachineStatus = "", lifecycleStatus = "正在检查并启动…") }
         viewModelScope.launch {
@@ -397,15 +406,17 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
                         lifecycleStatus = result.optString("error", "启动失败")) }
                     return@launch
                 }
+                // Status records written by older app versions carry no agent: those were Codex.
+                val name = Agents.label(result.optJSONObject("proposal")?.optString("agent", "codex") ?: state.value.agent)
                 repeat(240) { attempt ->
                     if (token != epoch || !state.value.connected) return@launch
                     val status = result.optString("status")
                     mutable.update { it.copy(lifecycleMachineStatus = status, lifecycleStatus = when (status) {
                         "cloning" -> "正在克隆仓库；操作 ID：$operation"
                         "pulling" -> "正在快速前进更新仓库；操作 ID：$operation"
-                        "starting" -> "正在启动 Codex；操作 ID：$operation"
-                        "cloned", "pulled" -> "项目准备完成，正在启动 Codex…"
-                        "started" -> "已启动 Codex，正在寻找窗格…"
+                        "starting" -> "正在启动 $name；操作 ID：$operation"
+                        "cloned", "pulled" -> "项目准备完成，正在启动 $name…"
+                        "started" -> "已启动 $name，正在寻找窗格…"
                         "failed", "uncertain" -> result.optString("error", "启动失败；操作 ID：$operation")
                         else -> "启动结果未确定；操作 ID：$operation"
                     }) }
@@ -427,7 +438,7 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
                         if (attempt >= 3 && pane?.command == "bash") {
                             mutable.update { it.copy(lifecycleBusy = false,
                                 lifecycleMachineStatus = "uncertain",
-                                lifecycleStatus = "Codex 启动后已退出；请打开 ${pane.session} 窗格查看错误。") }
+                                lifecycleStatus = "$name 启动后已退出；请打开 ${pane.session} 窗格查看错误。") }
                             return@launch
                         }
                         mutable.update { it.copy(panes = panes) }
@@ -715,7 +726,7 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
                     if (clearDraft) { drafts.remove(pane.identity); clearAttachments() }
                     if (clearAnswer) {
                         questionDrafts.remove(memoKey(s.binding.orEmpty()) + ":" + s.answerQuestion)
-                        mutable.update { it.copy(questionChoice = null, answered = "回答已提交到 Codex 输入端") }
+                        mutable.update { it.copy(questionChoice = null, answered = "回答已提交到 ${pane.agentName} 输入端") }
                     }
                     mutable.update { it.copy(busy = false, questionsOpen = if (closeQuestions) false else it.questionsOpen, draft = if (clearDraft) "" else it.draft, message = if (clearDraft) null else successMessage, delivery = if (clearDraft) "submitted" else it.delivery, screenToken = null, answerDraft = if (clearAnswer) "" else it.answerDraft) }
                     rememberSession()
@@ -812,6 +823,7 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
                                 restoreOffset = if (initial) memo?.anchorOffset ?: 0 else it.restoreOffset,
                                 seen = if (initial) memo?.seen.orEmpty() else it.seen,
                                 catchingUp = valid && chat.optBoolean("more"),
+                                skillPrefix = if (skillArray != null) chat.optString("skillPrefix", "$") else it.skillPrefix,
                                 skills = if (skillArray != null) (0 until skillArray.length()).map { i -> skillArray.getJSONObject(i).let { v -> SkillOption(v.getString("name"), v.optString("description")) } } else it.skills)
                         }
                     }

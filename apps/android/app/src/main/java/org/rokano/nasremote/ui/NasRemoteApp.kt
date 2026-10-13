@@ -164,6 +164,7 @@ private fun PanesScreen(state: RemoteState, model: RemoteViewModel) {
         item {
             Text("正在进行", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.SemiBold)
             Text("${state.profile.user}@${state.profile.host}", Modifier.padding(top = 8.dp, bottom = 12.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
+            AgentSwitch(state, model)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 FilledTonalButton(onClick = { model.openLifecycle("restore_new") }) { Text("恢复历史") }
                 Button(onClick = { model.openLifecycle("existing") }) { Text("新建项目会话") }
@@ -174,22 +175,24 @@ private fun PanesScreen(state: RemoteState, model: RemoteViewModel) {
             Card(Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(24.dp)) {
                     Text("没有可连接的窗格", style = MaterialTheme.typography.titleMedium)
-                    Text("可从上方恢复历史对话，或为项目创建 tmux/Codex 会话。", Modifier.padding(top = 8.dp))
+                    Text("可从上方恢复历史对话，或为项目创建 tmux/${Agents.label(state.agent)} 会话。", Modifier.padding(top = 8.dp))
                 }
             }
         }
-        items(state.panes, key = { it.identity }) { pane ->
+        // Panes running the preferred agent first, then the other agent, then plain terminals.
+        val ordered = state.panes.sortedBy { if (it.command == state.agent) 0 else if (it.canWrite) 1 else 2 }
+        items(ordered, key = { it.identity }) { pane ->
             Card(onClick = { model.select(pane) }, enabled = !state.busy, modifier = Modifier.fillMaxWidth().animateItem(), shape = RoundedCornerShape(24.dp)) {
                 Column(Modifier.padding(22.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(pane.session, Modifier.weight(1f), style = MaterialTheme.typography.titleLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        SuggestionChip(onClick = { model.select(pane) }, label = { Text(if (pane.canWrite) "Codex" else "仅查看") })
+                        SuggestionChip(onClick = { model.select(pane) }, label = { Text(if (pane.canWrite) pane.agentName else "仅查看") })
                     }
                     Text(pane.path, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2, overflow = TextOverflow.Ellipsis)
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text("${pane.id}  ·  ${pane.command}", Modifier.weight(1f), style = MaterialTheme.typography.labelMedium)
                         if (pane.canWrite) TextButton(onClick = { model.select(pane, terminal = true) }) { Text("终端模式") }
-                        else if (pane.command == "bash") TextButton(onClick = { model.openLifecycle("new_pane", pane) }) { Text("启动 Codex") }
+                        else if (pane.command == "bash") TextButton(onClick = { model.openLifecycle("new_pane", pane) }) { Text("启动 ${Agents.label(state.agent)}") }
                     }
                 }
             }
@@ -207,12 +210,14 @@ private fun LifecycleScreen(state: RemoteState, model: RemoteViewModel) {
     var url by remember(mode) { mutableStateOf("") }
     var branch by remember(mode) { mutableStateOf("") }
     var pull by remember(mode) { mutableStateOf(false) }
-    var args by remember(mode) { mutableStateOf("--yolo") }
+    val agent = Agents.label(state.agent)
+    var args by remember(mode, state.agent) { mutableStateOf(Agents.defaultArgs(state.agent)) }
     val restoring = mode.startsWith("restore")
     val choices = if (mode == "restore_pane") state.lifecycleThreads.filter { it.path == state.lifecyclePane?.path } else state.lifecycleThreads
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Text("恢复或启动 Codex", style = MaterialTheme.typography.headlineMedium)
+        Text("恢复或启动 $agent", style = MaterialTheme.typography.headlineMedium)
         Text("项目默认位于 NAS 的 ~/code；输入启动参数后直接执行。", style = MaterialTheme.typography.bodyMedium)
+        if (mode != "inspect") AgentSwitch(state, model)
         if (mode in listOf("new_pane", "restore_pane")) Row(horizontalArrangement = Arrangement.Center) {
             FilterChip(selected = mode == "new_pane", onClick = { model.openLifecycle("new_pane", state.lifecyclePane) }, label = { Text("新建对话") })
             Spacer(Modifier.width(8.dp))
@@ -249,11 +254,11 @@ private fun LifecycleScreen(state: RemoteState, model: RemoteViewModel) {
             Checkbox(checked = pull, onCheckedChange = { pull = it }, enabled = !state.lifecycleBusy)
             Text("先拉取已有 Git 仓库（仅快速前进）")
         }
-        if (mode != "inspect") OutlinedTextField(args, { args = it.take(500) }, label = { Text("Codex 启动参数") },
-            supportingText = { Text("默认 --yolo（跳过审批与沙箱）；可删改。") }, singleLine = true,
+        if (mode != "inspect") OutlinedTextField(args, { args = it.take(500) }, label = { Text("$agent 启动参数") },
+            supportingText = { Text("默认 ${Agents.defaultArgs(state.agent)}（跳过权限确认${if (state.agent == "codex") "与沙箱" else ""}）；可删改。") }, singleLine = true,
             enabled = !state.lifecycleBusy, modifier = Modifier.fillMaxWidth())
         if (mode != "inspect") Button(onClick = { model.prepareLifecycle(session, path, thread, url, branch, pull, args) },
-            enabled = !state.lifecycleBusy && (!restoring || thread.isNotEmpty()), modifier = Modifier.fillMaxWidth()) { Text("启动 Codex") }
+            enabled = !state.lifecycleBusy && (!restoring || thread.isNotEmpty()), modifier = Modifier.fillMaxWidth()) { Text("启动 $agent") }
         if (state.lifecycleStatus.isNotBlank()) Text(state.lifecycleStatus, style = MaterialTheme.typography.bodyMedium)
         if (mode == "inspect" && !state.lifecycleBusy && state.lifecycleOperation != null &&
             state.lifecycleMachineStatus !in listOf("cloning", "pulling", "starting", "cloned", "pulled"))
@@ -300,7 +305,7 @@ private fun TerminalScreen(state: RemoteState, model: RemoteViewModel) {
                 FilledTonalButton(onClick = model::paste, enabled = writable && state.draft.isNotBlank(), modifier = Modifier.weight(1f).heightIn(min = 48.dp)) { Text("粘贴到窗格") }
                 Button(onClick = { model.key(RemoteKey.Enter) }, enabled = writable, modifier = Modifier.heightIn(min = 48.dp)) { Text("回车") }
             }
-            Row(Modifier.fillMaxWidth()) {
+            if (pane.command == "codex") Row(Modifier.fillMaxWidth()) {
                 TextButton(onClick = { model.key(RemoteKey.ShiftLeft) }, enabled = writable) { Text("打开 / 下一题 ⇧←") }
                 TextButton(onClick = { model.key(RemoteKey.AltDown) }, enabled = writable) { Text("上一题 / 返回 Alt↓") }
             }
@@ -311,7 +316,19 @@ private fun TerminalScreen(state: RemoteState, model: RemoteViewModel) {
                 TextButton(onClick = { model.key(RemoteKey.Escape) }, enabled = writable) { Text("Esc") }
                 TextButton(onClick = { interrupt = true }, enabled = writable) { Text("中断") }
             }
-        } else Text("此窗格仅供查看。首版只向 Codex 发送输入。", style = MaterialTheme.typography.bodySmall)
+        } else Text("此窗格仅供查看。只向 Claude Code / Codex 发送输入。", style = MaterialTheme.typography.bodySmall)
     }
     if (interrupt) AlertDialog(onDismissRequest = { interrupt = false }, title = { Text("中断当前操作？") }, text = { Text("向 ${pane.session} / ${pane.id} 发送 Ctrl-C，可能取消正在运行的操作。") }, confirmButton = { TextButton(onClick = { interrupt = false; model.key(RemoteKey.Interrupt) }) { Text("发送 Ctrl-C") } }, dismissButton = { TextButton(onClick = { interrupt = false }) { Text("取消") } })
+}
+
+/** Preferred agent for new sessions and history; running panes are detected individually. */
+@Composable
+private fun AgentSwitch(state: RemoteState, model: RemoteViewModel) {
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text("智能体", style = MaterialTheme.typography.labelLarge)
+        Agents.names.forEach { (code, label) ->
+            FilterChip(selected = state.agent == code, onClick = { model.chooseAgent(code) },
+                enabled = !state.lifecycleBusy, label = { Text(label) })
+        }
+    }
 }

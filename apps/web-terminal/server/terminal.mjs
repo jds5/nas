@@ -1,5 +1,6 @@
 import { WebSocket } from 'ws';
 import { randomUUID } from 'node:crypto';
+import { AGENTS } from './tmux.mjs';
 export const validSize = s => s && Number.isInteger(s.cols) && Number.isInteger(s.rows) && s.cols >= 20 && s.cols <= 400 && s.rows >= 5 && s.rows <= 160;
 
 // Each selection has an epoch. Old output/acks/input cannot cross a session switch.
@@ -27,7 +28,7 @@ export function connectTerminal({ ws, ref, user, tmux, peers, uploads, conversat
     modeBusy = true; const client = term;
     try {
       const snapshot = await tmux.snapshot(activeRef);
-      const mode = snapshot?.command === 'codex' ? 'codex' : 'terminal';
+      const mode = AGENTS.includes(snapshot?.command) ? snapshot.command : 'terminal';
       if (!closed && client === term && mode !== lastMode) { lastMode = mode; send({ type: 'mode', mode, epoch }); }
     } finally { modeBusy = false; }
   }
@@ -103,7 +104,7 @@ export function connectTerminal({ ws, ref, user, tmux, peers, uploads, conversat
     const ownEpoch = epoch, client = term, ownRef = activeRef;
     const respond = value => { if (!closed && client === term && ownEpoch === epoch && !changing && Date.now() < deadline) send({ ...value, type: 'conversation', requestId: msg.requestId, epoch }); };
     if (typeof msg.requestId !== 'string' || !/^[\w-]{1,64}$/.test(msg.requestId)) return fail(1008, 'invalid_read');
-    if (!conversation || activeRef.kind === 'ssh') return respond({ ok: false, error: '请选择 tmux 中的 Codex 会话' });
+    if (!conversation || activeRef.kind === 'ssh') return respond({ ok: false, error: '请选择 tmux 中的 Codex / Claude Code 会话' });
     if (reading) return respond({ ok: false, error: '正在读取，请稍后重试' });
     if ((msg.before != null && (!Number.isSafeInteger(msg.before) || msg.before < 0 || !/^[a-f0-9]{64}$/.test(msg.binding || ''))) ||
         (msg.binding != null && !/^[a-f0-9]{64}$/.test(msg.binding))) return fail(1008, 'invalid_read');
@@ -114,10 +115,10 @@ export function connectTerminal({ ws, ref, user, tmux, peers, uploads, conversat
       conversationAt = Date.now();
       const before = await tmux.snapshot(ownRef);
       if (closed || client !== term || ownEpoch !== epoch || changing) return;
-      if (before?.command !== 'codex') return respond({ ok: false, error: '当前窗格没有运行 Codex，请使用终端历史' });
+      if (!AGENTS.includes(before?.command)) return respond({ ok: false, error: '当前窗格没有运行 Codex / Claude Code，请使用终端历史' });
       const result = await conversation.read({ ref: ownRef, before: msg.before, binding: msg.binding }, controller.signal);
       const after = await tmux.snapshot(ownRef);
-      if (!after || after.pane !== before.pane || after.command !== 'codex') throw new Error('changed');
+      if (!after || after.pane !== before.pane || after.command !== before.command) throw new Error('changed');
       respond(result);
     } catch { respond({ ok: false, error: '读取失败或会话已变化，请刷新；也可切换到终端历史' }); }
     finally { if (reading === controller) reading = undefined; }
@@ -127,11 +128,11 @@ export function connectTerminal({ ws, ref, user, tmux, peers, uploads, conversat
     submitting = true; const ownSerial = serial;
     try {
       const snapshot = await tmux.snapshot(activeRef);
-      if (!snapshot || snapshot.command !== 'codex') throw new Error('图片只能发送到当前前台运行 Codex 的窗口。');
+      if (!snapshot || !AGENTS.includes(snapshot.command)) throw new Error('图片只能发送到当前前台运行 Codex / Claude Code 的窗口。');
       const text = await uploads.message(msg, user, activeRef, snapshot.pane);
       const current = await tmux.snapshot(activeRef);
-      if (!current || current.command !== 'codex' || current.pane !== snapshot.pane || closed || ownSerial !== serial || Date.now() >= deadline) throw new Error('连接已变化，消息未发送。');
-      // Codex supports bracketed paste. Never interpolate uploaded filenames into shell commands.
+      if (!current || current.command !== snapshot.command || current.pane !== snapshot.pane || closed || ownSerial !== serial || Date.now() >= deadline) throw new Error('连接已变化，消息未发送。');
+      // Both agents support bracketed paste. Never interpolate uploaded filenames into shell commands.
       term.write(`\x1b[200~${text.replace(/\x1b/g, '')}\x1b[201~\r`);
       send({ type: 'submitted', epoch, requestId: msg.requestId });
     } catch (e) {

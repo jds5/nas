@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Read-only Codex history adapter invoked over fixed local SSH, JSON on stdin.
+"""Read-only Codex / Claude Code history adapter invoked over fixed local SSH, JSON on stdin.
 Dependencies: Python 3.9+, tmux, Linux /proc, adjacent nas_remote_bridge.py.
-No listener, input injection, arbitrary path argument, or modification of Codex.
+No listener, input injection, arbitrary path argument, or modification of the agent.
 """
 import importlib.util
 import json
@@ -23,7 +23,7 @@ MAX_PAGE = 384 * 1024
 
 def identity(ref):
     if not isinstance(ref, dict) or ref.get('kind', 'tmux') != 'tmux' or not re.fullmatch(r'\$\d{1,12}', ref.get('id', '')):
-        raise b.Refused('请选择 tmux 中的 Codex 会话')
+        raise b.Refused('请选择 tmux 中的 Codex / Claude Code 会话')
     generation = ref.get('generation', '')
     if not isinstance(generation, str) or not re.fullmatch(r'\d+:\d+:[\d.]+:\d+:\d+', generation):
         raise b.Refused('会话标识无效')
@@ -33,15 +33,18 @@ def identity(ref):
     ident, created, server, pane, pid, dead, command, socket_path = row
     st = os.stat(socket_path)
     dev, ino, _, expected_server, expected_created = generation.split(':')
-    if (ident != ref['id'] or (dev, ino, expected_server, expected_created) != (str(st.st_dev), str(st.st_ino), server, created) or dead != '0' or command != 'codex'):
-        raise b.Refused('当前窗格没有运行 Codex，请使用终端历史')
-    result = {'id': pane, 'pid': int(pid), 'serverPid': int(server)}
+    if (ident != ref['id'] or (dev, ino, expected_server, expected_created) != (str(st.st_dev), str(st.st_ino), server, created) or dead != '0' or command not in b.AGENTS):
+        raise b.Refused('当前窗格没有运行 Codex / Claude Code，请使用终端历史')
+    result = {'id': pane, 'pid': int(pid), 'serverPid': int(server), 'agent': command}
     b.target({'pane': result})
     return result
 
 
-def public_message(event, offset):
+def public_message(event, offset, agent='codex'):
     # Only completed public items. Never expose response_item/system/tool/reasoning.
+    if agent == 'claude':
+        _, item = b.claude_record(event)
+        return item and {'id': str(offset), 'role': item[1], 'text': b.clean(item[2]), 'phase': ''}
     if event.get('type') != 'event_msg':
         return None
     p = event.get('payload', {})
@@ -65,7 +68,7 @@ def public_message(event, offset):
     return {'id': str(offset), 'role': role, 'text': b.clean(text), 'phase': item.get('phase') or ''}
 
 
-def read_page(stream, before=None):
+def read_page(stream, before=None, agent='codex'):
     size = os.fstat(stream.fileno()).st_size
     end = size if before is None else before
     if type(end) is not int or end < 0 or end > size:
@@ -90,7 +93,7 @@ def read_page(stream, before=None):
     messages, used, cursor = [], 0, start
     for offset, raw in reversed(rows):
         try:
-            message = public_message(json.loads(raw), offset)
+            message = public_message(json.loads(raw), offset, agent)
         except (ValueError, TypeError, AttributeError):
             continue
         if message is None:
@@ -114,10 +117,10 @@ def handle(request):
     binding, stream, _ = b.locate(pane)
     try:
         if request.get('binding') is not None and request['binding'] != binding:
-            raise b.Refused('Codex 对话已切换，请刷新对话')
+            raise b.Refused('对话已切换，请刷新对话')
         if request.get('before') is not None and request.get('binding') != binding:
             raise b.Refused('历史翻页必须绑定当前对话')
-        page = read_page(stream, request.get('before'))
+        page = read_page(stream, request.get('before'), pane.get('agent', 'codex'))
     finally:
         stream.close()
     if identity(request['ref']) != pane:
@@ -125,8 +128,8 @@ def handle(request):
     check, stream, _ = b.locate(pane)
     stream.close()
     if check != binding:
-        raise b.Refused('Codex 对话已切换，请刷新对话')
-    return {'ok': True, 'binding': binding, **page}
+        raise b.Refused('对话已切换，请刷新对话')
+    return {'ok': True, 'binding': binding, 'agent': pane.get('agent', 'codex'), **page}
 
 
 if __name__ == '__main__':
@@ -140,5 +143,5 @@ if __name__ == '__main__':
     except b.Refused as error:
         result = {'ok': False, 'error': str(error)}
     except Exception:
-        result = {'ok': False, 'error': '暂时无法读取当前 Codex 对话，可切换到终端历史或稍后刷新'}
+        result = {'ok': False, 'error': '暂时无法读取当前智能体对话，可切换到终端历史或稍后刷新'}
     print(json.dumps(result, ensure_ascii=False))

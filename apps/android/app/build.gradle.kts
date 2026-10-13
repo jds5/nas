@@ -9,8 +9,8 @@ android {
         applicationId = "org.rokano.nasremote"
         minSdk = 28
         targetSdk = 37
-        versionCode = 13
-        versionName = "0.5.3"
+        versionCode = 14
+        versionName = "0.6.0"
     }
     buildFeatures { compose = true }
     compileOptions {

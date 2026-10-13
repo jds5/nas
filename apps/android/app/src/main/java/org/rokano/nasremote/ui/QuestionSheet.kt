@@ -24,7 +24,7 @@ fun QuestionSheet(state: RemoteState, model: RemoteViewModel) {
     ModalBottomSheet(onDismissRequest = model::closeQuestions, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
         Column(Modifier.fillMaxWidth().imePadding().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp).padding(bottom = 24.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Text(if (state.reconnecting) "正在接回原问题…" else "Codex 的问题", style = MaterialTheme.typography.headlineSmall)
+            Text(if (state.reconnecting) "正在接回原问题…" else "${state.selected?.agentName ?: "Codex"} 的问题", style = MaterialTheme.typography.headlineSmall)
             if (state.busy) LinearProgressIndicator(Modifier.fillMaxWidth())
             state.message?.let { Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.primary) }
             AnimatedContent(targetState = state.question, contentKey = { it?.id }, label = "question") { question ->

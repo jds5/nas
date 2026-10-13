@@ -10,7 +10,7 @@ export class ConversationReader {
     try {
       const raw = await new Promise((resolve, reject) => {
         const child = execFile('/usr/bin/ssh', [...SSH_ARGS.slice(0, -1), '-T', SSH_ARGS.at(-1),
-          'python3 /home/yao/.local/share/nas-web-terminal/reader-0.5.0/read_conversation.py'],
+          'python3 /home/yao/.local/share/nas-web-terminal/reader-0.6.0/read_conversation.py'],
         { timeout: 22000, maxBuffer: 512 * 1024, signal, env: { PATH: '/usr/bin:/bin', HOME: '/tmp', LANG: 'C.UTF-8' } },
         (error, stdout) => error ? reject(error) : resolve(stdout));
         child.stdin.on('error', () => {});
@@ -18,9 +18,10 @@ export class ConversationReader {
         child.stdin.end(JSON.stringify({ ...request, ref: { id, kind, generation } }));
       });
       const result = JSON.parse(raw);
-      if (!result.ok) return { ok: false, error: typeof result.error === 'string' ? result.error.slice(0, 200) : 'Codex 历史暂不可读' };
+      if (!result.ok) return { ok: false, error: typeof result.error === 'string' ? result.error.slice(0, 200) : '对话历史暂不可读' };
       if (!/^[a-f0-9]{64}$/.test(result.binding) || !Array.isArray(result.messages) || result.messages.length > 60 || !Number.isSafeInteger(result.before)) throw new Error('invalid_history');
-      if (result.messages.some(m => !['user', 'assistant'].includes(m.role) || typeof m.text !== 'string' || typeof m.id !== 'string')) throw new Error('invalid_message');
+      if (result.messages.some(m => !['user', 'assistant', 'command'].includes(m.role) || typeof m.text !== 'string' || typeof m.id !== 'string')) throw new Error('invalid_message');
+      if (!['codex', 'claude'].includes(result.agent ?? 'codex')) throw new Error('invalid_agent');
       return result;
     } finally { this.active--; }
   }

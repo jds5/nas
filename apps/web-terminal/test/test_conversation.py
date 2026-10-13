@@ -60,6 +60,17 @@ class ConversationTests(unittest.TestCase):
             for cursor in [-1, True, 999999999]:
                 with self.assertRaises(r.b.Refused): r.read_page(f, cursor)
 
+    def test_claude_transcript_public_text_only(self):
+        events = [{'type': 'user', 'uuid': 'u', 'message': {'role': 'user', 'content': '问题'}},
+                  {'type': 'assistant', 'uuid': 't', 'message': {'content': [{'type': 'tool_use', 'input': 'PRIVATE'}]}},
+                  {'type': 'user', 'uuid': 'r', 'message': {'content': [{'type': 'tool_result', 'content': 'PRIVATE'}]}},
+                  {'type': 'assistant', 'uuid': 'a', 'message': {'content': [{'type': 'thinking', 'thinking': 'PRIVATE'}, {'type': 'text', 'text': '| a |\n| - |\n| b |'}]}},
+                  {'type': 'user', 'uuid': 'm', 'isMeta': True, 'message': {'content': 'PRIVATE'}}]
+        with stream(events) as f:
+            page = r.read_page(f, agent='claude')
+        self.assertEqual([(m['role'], m['text']) for m in page['messages']], [('user', '问题'), ('assistant', '| a |\n| - |\n| b |')])
+        self.assertNotIn('PRIVATE', str(page))
+
     def test_binding_and_pane_switch_rejected(self):
         pane = {'id': '%1', 'pid': 10, 'serverPid': 20}
         with stream([record('PUBLIC')]) as f, patch.object(r, 'identity', return_value=pane), patch.object(r.b, 'locate', return_value=('a'*64, f, {})):

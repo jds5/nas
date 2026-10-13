@@ -6,12 +6,12 @@ const markdown = new Marked({ gfm: true, breaks: false, renderer: {
   image: ({ text }) => escape(`[图片：${text || '附件'}]`),
 } });
 const tags = ['p', 'br', 'hr', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'strong', 'em', 'del', 'blockquote', 'ul', 'ol', 'li', 'pre', 'code', 'table', 'thead', 'tbody', 'tr', 'th', 'td', 'a'];
-export function messageElement(message) {
+export function messageElement(message, agentName = 'Codex') {
   const article = document.createElement('article'); article.className = `chat-message ${message.role}`;
   const heading = document.createElement('div'); heading.className = 'chat-author';
-  heading.textContent = message.role === 'user' ? '你' : message.phase === 'commentary' ? 'Codex · 进度' : 'Codex'; article.append(heading);
+  heading.textContent = message.role === 'user' ? '你' : message.role === 'command' ? '命令输出' : message.phase === 'commentary' ? `${agentName} · 进度` : agentName; article.append(heading);
   const body = document.createElement('div'); body.className = 'chat-body'; article.append(body);
-  if (message.role === 'user') body.textContent = message.text;
+  if (message.role !== 'assistant') body.textContent = message.text;
   else {
     try {
       body.append(DOMPurify.sanitize(markdown.parse(message.text), {
@@ -53,14 +53,14 @@ export function messageElement(message) {
   return article;
 }
 
-export function conversationView({ send, connected }) {
+export function conversationView({ send, connected, agentName = () => 'Codex' }) {
   const $ = id => document.getElementById(id);
   let active = false, pending, timer, binding, page, cursor = null, stack = [], serial = 0;
   function busy(value) { for (const id of ['chat-older', 'chat-newer', 'chat-refresh']) $(id).disabled = value; }
   function request(before = null, movement = 'refresh') {
     if (!active || !connected() || pending) return;
     const requestId = `conversation-${++serial}`; pending = { requestId, before, movement }; busy(true);
-    $('chat-status').textContent = '正在读取 Codex 原始消息…';
+    $('chat-status').textContent = `正在读取 ${agentName()} 原始消息…`;
     send({ type: 'conversation', requestId, ...(movement !== 'refresh' ? { before, binding } : {}) });
     timer = setTimeout(() => { if (pending?.requestId === requestId) { pending = undefined; busy(false); $('chat-status').textContent = '读取超时，可刷新重试或切换到终端历史。'; } }, 25000);
   }
@@ -83,7 +83,7 @@ export function conversationView({ send, connected }) {
       else stack = [];
       binding = result.binding; cursor = action.before; page = result;
       const fragment = document.createDocumentFragment();
-      for (const message of result.messages) fragment.append(messageElement(message));
+      for (const message of result.messages) fragment.append(messageElement(message, agentName()));
       $('chat-messages').replaceChildren(fragment);
       $('chat-older').hidden = !result.hasOlder; $('chat-newer').hidden = !stack.length;
       $('chat-status').textContent = (result.skipped ? '部分超大记录未显示；' : '') + (result.messages.length ? `${result.messages.length} 条消息 · 表格可横向滚动 · 刷新查看最新回复` : result.hasOlder ? '此段没有可展示的消息，请继续加载更早消息。' : '暂无已完成的消息；可返回终端处理启动菜单或发送首条消息。');

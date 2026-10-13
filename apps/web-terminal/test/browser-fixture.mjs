@@ -13,6 +13,8 @@ await tmux.command(['new-session', '-d', '-s', '中文测试', '/bin/sh']);
 await mkdir(`${dir}/uploads`);
 await copyFile('/bin/cat', `${dir}/codex`); await chmod(`${dir}/codex`, 0o755);
 await tmux.command(['new-session', '-d', '-s', 'codex-images', `${dir}/codex`]);
+await copyFile('/bin/cat', `${dir}/claude`); await chmod(`${dir}/claude`, 0o755);
+await tmux.command(['new-session', '-d', '-s', 'claude-chat', `${dir}/claude`]);
 const pair = await generateKeyPair('RS256');
 const config = { issuer: 'https://test.cloudflareaccess.com', audience: 'browser-test', origin: 'http://terminal-fixture:3000', emails: ['test@example.test'] };
 const token = await new SignJWT({ email: config.emails[0], type: 'app' }).setProtectedHeader({ alg: 'RS256', kid: 'browser-test' })

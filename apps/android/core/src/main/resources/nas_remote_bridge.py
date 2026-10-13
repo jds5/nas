@@ -18,6 +18,10 @@ from pathlib import Path
 
 MAX_READ = 1024 * 1024
 MAX_TEXT = 24000
+# Supported terminal agents by tmux pane_current_command; nothing else receives input.
+AGENTS = {'codex': 'Codex', 'claude': 'Claude Code'}
+UUID = re.compile(r'[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}')
+RULE = re.compile(r'─{20,}')
 QUESTION_OPEN = re.compile(r'shift\s*\+\s*← to answer')
 QUESTION_SKIP = re.compile(r'ctrl\s*\+\s*\] skip')
 QUESTION_FOOTER = re.compile(
@@ -67,9 +71,12 @@ def target(request):
     if any(type(pane.get(k)) is not int or pane[k] <= 0 for k in ("pid", "serverPid")):
         raise Refused("进程标识无效")
     actual = run("tmux", "display-message", "-p", "-t", ident, "#{pane_pid}:#{pid}:#{pane_dead}:#{pane_current_command}").strip()
-    if actual != f"{pane['pid']}:{pane['serverPid']}:0:codex":
-        raise Refused("窗格已不再运行原 Codex，已拒绝操作")
-    return pane
+    agent = actual.rsplit(':', 1)[-1]
+    if agent not in AGENTS or actual != f"{pane['pid']}:{pane['serverPid']}:0:{agent}":
+        raise Refused("窗格已不再运行原智能体（Codex / Claude Code），已拒绝操作")
+    if pane.get('agent', agent) != agent:
+        raise Refused("窗格中的智能体已变化，已拒绝操作")
+    return dict(pane, agent=agent)
 
 
 def process_info(pid):
@@ -127,7 +134,7 @@ class DaemonReader:
             headers = {name.lower(): value.strip() for name, value in (line.split(':', 1) for line in lines[1:] if ':' in line)}
             if not lines[0].startswith('HTTP/1.1 101 ') or headers.get('sec-websocket-accept') != accept:
                 raise Refused('Codex 后台服务握手失败')
-            self.rpc('initialize', {'clientInfo': {'name': 'nas_remote_reader', 'version': '0.5.3'},
+            self.rpc('initialize', {'clientInfo': {'name': 'nas_remote_reader', 'version': '0.6.0'},
                                   'capabilities': {'experimentalApi': True}})
             self.send({'method': 'initialized'})
         except Exception:
@@ -271,7 +278,82 @@ def daemon_thread(pid, start):
         reader.close()
 
 
+def claude_process(pane):
+    """Exactly one Claude Code frontend in the pane tree; never below it (subagents)."""
+    todo, visited, found = [pane['pid']], set(), []
+    while todo and len(visited) < 128:
+        pid = todo.pop()
+        if pid in visited:
+            continue
+        visited.add(pid)
+        try:
+            _, start, comm = process_info(pid)
+            if comm == 'claude':
+                found.append((pid, start))
+                continue
+            todo.extend(int(c) for c in (Path('/proc') / str(pid) / 'task' / str(pid) / 'children').read_text().split())
+        except (OSError, ValueError, IndexError):
+            continue
+    if len(found) != 1:
+        raise Refused('无法唯一确认窗格中的 Claude Code 进程')
+    return found[0]
+
+
+def private_file(path, limit):
+    descriptor = os.open(path, os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW)
+    stream = os.fdopen(descriptor, 'rb')
+    st = os.fstat(stream.fileno())
+    if not stat.S_ISREG(st.st_mode) or st.st_uid != os.getuid() or (limit and st.st_size > limit):
+        stream.close()
+        raise Refused('Claude Code 会话文件身份无效')
+    return stream, st
+
+
+def claude_session(pane, *, required=True):
+    """Bind via Claude Code's own pid registry, checked against the live start time."""
+    pid, start = claude_process(pane)
+    proc = Path('/proc') / str(pid)
+    environment = dict(v.split(b'=', 1) for v in (proc / 'environ').read_bytes().split(b'\0') if b'=' in v)
+    home = Path(os.fsdecode(environment.get(b'CLAUDE_CONFIG_DIR', os.fsencode(Path.home() / '.claude'))))
+    try:
+        stream, _ = private_file(home / 'sessions' / f'{pid}.json', 65536)
+    except FileNotFoundError:
+        if required:
+            raise Refused('Claude Code 尚未登记当前会话，请先处理启动提示') from None
+        return pid, start, home, None, None
+    with stream:
+        state = json.loads(stream.read())
+    ident = state.get('sessionId')
+    if state.get('pid') != pid or str(state.get('procStart')) != start or not isinstance(ident, str) or not UUID.fullmatch(ident):
+        raise Refused('Claude Code 会话登记与运行进程不一致')
+    projects = home / 'projects'
+    matches = [path for path in projects.glob('*/' + ident + '.jsonl')
+               if not path.is_symlink() and path.resolve().parent.parent == projects.resolve()] if projects.is_dir() else []
+    if len(matches) > 1:
+        raise Refused('Claude Code 会话记录不唯一，不会猜测')
+    return pid, start, home, state, (matches[0] if matches else None)
+
+
+def claude_locate(pane):
+    pid, start, _, state, path = claude_session(pane)
+    if path is None:
+        raise Refused('Claude Code 会话尚未生成记录；可先发送首条消息')
+    stream, st = private_file(path, 0)
+    try:
+        if process_info(pid)[1] != start:
+            raise Refused('Claude Code 进程已变化')
+        binding = hashlib.sha256(f"claude:{pid}:{start}:{st.st_dev}:{st.st_ino}:{state['sessionId']}".encode()).hexdigest()
+        info = {'id': state['sessionId'], 'cwd': state.get('cwd') if isinstance(state.get('cwd'), str) else str(Path.home()),
+                'agent': 'claude', 'status': state.get('status')}
+        return binding, stream, info
+    except Exception:
+        stream.close()
+        raise
+
+
 def locate(pane):
+    if pane.get('agent') == 'claude':
+        return claude_locate(pane)
     # Follow the pane process tree, not cwd or the most recently modified session.
     todo, visited, candidates = [pane['pid']], set(), {}
     frontends = []
@@ -392,7 +474,89 @@ def readable_question_replies(replies):
     return '\n'.join(result)
 
 
-def public_messages(stream, before=None, after=None, details=False):
+def codex_record(event):
+    """One Codex rollout line -> (status or None, (id, role, text, phase) or None)."""
+    payload = event.get('payload', {})
+    if event.get('type') != 'event_msg':
+        return None, None
+    kind = payload.get('type')
+    status = {'task_started': 'working', 'task_complete': 'idle', 'turn_aborted': 'interrupted'}.get(kind)
+    if kind != 'item_completed':
+        return status, None
+    item = payload.get('item', {})
+    if item.get('type') == 'CommandExecution' and item.get('source') == 'user_shell':
+        command = item.get('command', [])
+        label = command[-1] if isinstance(command, list) and command and isinstance(command[-1], str) else '用户命令'
+        output = item.get('aggregated_output', '')
+        item = dict(item, type='UserShell', content=[{'type': 'text', 'text': '! ' + label + '\n\n' + str(output) + '\n[退出码 ' + str(item.get('exit_code', '?')) + ']'}])
+    role = {'UserMessage': 'user', 'AgentMessage': 'assistant', 'UserShell': 'command'}.get(item.get('type'))
+    if not role or not isinstance(item.get('content'), list):
+        return status, None
+    phase = item.get('phase', '')
+    if role == 'assistant' and phase not in ('commentary', 'final_answer', 'final', None, ''):
+        return status, None
+    text = '\n'.join(c['text'] for c in item['content'] if isinstance(c, dict) and c.get('type') in ('text', 'Text', 'input_text', 'output_text') and isinstance(c.get('text'), str))
+    if not text.strip():
+        return status, None
+    replies = transport_envelope(text)
+    if replies:
+        if role != 'user':
+            return status, None
+        text = readable_question_replies(replies)
+    mid = item.get('id')
+    if not isinstance(mid, str) or not mid:
+        return status, None
+    return status, (mid, role, text, phase or '')
+
+
+CLAUDE_TAG = re.compile(r'<(command-name|command-args|local-command-stdout|bash-input|bash-stdout|bash-stderr)>(.*?)</\1>', re.S)
+ANSI = re.compile(r'\x1b\[[0-9;?]*[A-Za-z]')
+
+
+def claude_record(event):
+    """One Claude Code transcript line -> public user/assistant text only.
+
+    Tool calls/results, thinking, meta caveats, sidechains and system records stay hidden.
+    """
+    kind = event.get('type')
+    if kind == 'system':
+        return ('idle' if event.get('subtype') == 'turn_duration' else None), None
+    if kind not in ('user', 'assistant') or event.get('isMeta') or event.get('isSidechain') or event.get('isCompactSummary'):
+        return None, None
+    message, mid = event.get('message'), event.get('uuid')
+    if not isinstance(message, dict) or not isinstance(mid, str) or not mid:
+        return None, None
+    content = message.get('content')
+    blocks = [{'type': 'text', 'text': content}] if isinstance(content, str) else content if isinstance(content, list) else []
+    parts, images = [], 0
+    for block in blocks:
+        if not isinstance(block, dict) or block.get('type') == 'tool_result':
+            return None, None
+        if block.get('type') == 'text' and isinstance(block.get('text'), str):
+            parts.append(block['text'])
+        images += block.get('type') == 'image'
+    text = '\n'.join(parts) + ('\n[图片 ×%d]' % images if images else '')
+    if not text.strip():
+        return None, None
+    if kind == 'assistant':
+        return None, (mid, 'assistant', text, '')
+    if text.strip().startswith('[Request interrupted by user'):
+        return 'interrupted', None
+    tags = dict(CLAUDE_TAG.findall(text))
+    if 'bash-input' in tags:
+        return 'working', (mid, 'user', '! ' + tags['bash-input'].strip(), '')
+    if 'bash-stdout' in tags or 'bash-stderr' in tags:
+        output = '\n'.join(v.strip() for v in (tags.get('bash-stdout', ''), tags.get('bash-stderr', '')) if v.strip())
+        return None, (mid, 'command', ANSI.sub('', output) or '（无输出）', '')
+    if 'command-name' in tags:
+        return None, (mid, 'user', (tags['command-name'].strip() + ' ' + tags.get('command-args', '').strip()).strip(), '')
+    if 'local-command-stdout' in tags:
+        output = ANSI.sub('', tags['local-command-stdout']).strip()
+        return None, ((mid, 'command', output, '') if output else None)
+    return 'working', (mid, 'user', text, '')
+
+
+def public_messages(stream, before=None, after=None, details=False, agent='codex'):
     end = os.fstat(stream.fileno()).st_size
     if before is not None:
         if type(before) is not int or not 0 <= before <= end:
@@ -431,48 +595,20 @@ def public_messages(stream, before=None, after=None, details=False):
             skipped = True
             continue
         try:
-            event = json.loads(raw)
-            payload = event.get('payload', {})
-            if event.get('type') != 'event_msg':
-                continue
-            kind = payload.get('type')
-            if kind in ('task_started', 'task_complete', 'turn_aborted'):
-                status = {'task_started': 'working', 'task_complete': 'idle', 'turn_aborted': 'interrupted'}[kind]
-            if kind != 'item_completed':
-                continue
-            item = payload.get('item', {})
-            if item.get('type') == 'CommandExecution' and item.get('source') == 'user_shell':
-                command = item.get('command', [])
-                label = command[-1] if isinstance(command, list) and command and isinstance(command[-1], str) else '用户命令'
-                output = item.get('aggregated_output', '')
-                item = dict(item, type='UserShell', content=[{'type': 'text', 'text': '! ' + label + '\n\n' + str(output) + '\n[退出码 ' + str(item.get('exit_code', '?')) + ']'}])
-            role = {'UserMessage': 'user', 'AgentMessage': 'assistant', 'UserShell': 'command'}.get(item.get('type'))
-            if not role or not isinstance(item.get('content'), list):
-                continue
-            phase = item.get('phase', '')
-            if role == 'assistant' and phase not in ('commentary', 'final_answer', 'final', None, ''):
-                continue
-            text = '\n'.join(c['text'] for c in item['content'] if isinstance(c, dict) and c.get('type') in ('text', 'Text', 'input_text', 'output_text') and isinstance(c.get('text'), str))
-            if not text.strip():
-                continue
-            replies = transport_envelope(text)
-            if replies:
-                if role != 'user':
-                    continue
-                text = readable_question_replies(replies)
+            state, item = (claude_record if agent == 'claude' else codex_record)(json.loads(raw))
+        except (ValueError, TypeError, KeyError, AttributeError):
+            continue
+        status = state or status
+        if item:
+            mid, role, text, phase = item
             clipped = len(text) > MAX_TEXT
             text = clean(text[:MAX_TEXT]) + ('\n[消息过长，余下内容请在终端查看]' if clipped else '')
-            mid = item.get('id')
-            if not isinstance(mid, str) or not mid:
-                continue
             messages.append({'id': mid[:128], 'role': role, 'text': text, 'phase': phase or '', 'offset': offset})
             offsets.append(offset)
             if after is not None and (len(messages) > 80 or len(json.dumps(messages, ensure_ascii=False).encode()) > 180000):
                 messages.pop()
                 consumed = offset
                 break
-        except (ValueError, TypeError, KeyError):
-            continue
     # Bounded network / UI memory. Older history remains reachable by byte pagination.
     removed = 0
     while len(messages) > 80 or len(json.dumps(messages, ensure_ascii=False).encode()) > 180000:
@@ -485,11 +621,15 @@ def public_messages(stream, before=None, after=None, details=False):
     return messages, status, start
 
 
-def skills(cwd):
-    roots = [Path.home()/'.agents/skills', Path.home()/'.codex/skills', Path.home()/'.codex/plugins/cache']
+def skills(cwd, agent='codex'):
+    # Claude Code invokes personal/project skills as /name; Codex uses $name.
     project = Path(cwd)
-    for parent in [project, *project.parents][:12]:
-        roots.extend([parent/'.agents/skills', parent/'.codex/skills'])
+    if agent == 'claude':
+        roots = [Path.home()/'.claude/skills', *[parent/'.claude/skills' for parent in [project, *project.parents][:12]]]
+    else:
+        roots = [Path.home()/'.agents/skills', Path.home()/'.codex/skills', Path.home()/'.codex/plugins/cache']
+        for parent in [project, *project.parents][:12]:
+            roots.extend([parent/'.agents/skills', parent/'.codex/skills'])
     result, seen, visited = [], set(), 0
     deadline = time.monotonic() + 1.0
     for root in roots:
@@ -528,9 +668,46 @@ def skills(cwd):
     return result
 
 
+def claude_composer(pane, require_empty, text):
+    """Claude Code's input row is framed by full-width rules; menus/dialogs never are."""
+    x, y = map(int, run('tmux', 'display-message', '-p', '-t', pane['id'], '#{cursor_x}:#{cursor_y}').strip().split(':'))
+    screen = [line.replace('\xa0', ' ') for line in run('tmux', 'capture-pane', '-p', '-t', pane['id']).splitlines()]
+    def framed(row):
+        return 0 < row < len(screen) and RULE.fullmatch(screen[row - 1].strip())
+    if not require_empty and y < len(screen):
+        prefix = '! ' if text.startswith('!') else '❯ '
+        expected = text[1:].lstrip() if text.startswith('!') else text
+        pasted = re.fullmatch(r'❯ \[Pasted text #\d+(?: \+(\d+) lines)?\]', screen[y].rstrip())
+        if pasted and framed(y) and not text.startswith(('/', '!')) and int(pasted[1] or 0) in (0, text.count('\n')):
+            return
+        for row in range(max(0, y - 100), y + 1):
+            if screen[row].startswith(prefix) and framed(row):
+                actual = '\n'.join([screen[row][2:].rstrip(), *[line[2:].rstrip() for line in screen[row + 1:y + 1]]])
+                if actual == expected.rstrip() or re.sub(r'\s+', '', actual) == re.sub(r'\s+', '', expected):
+                    return
+        raise Refused('无法核对粘贴结果，请在控制面板检查后手动回车')
+    if y >= len(screen) or not screen[y].startswith('❯ ') or not framed(y):
+        raise Refused('Claude Code 当前显示菜单或确认请求，请打开控制面板处理后再发送')
+    if require_empty:
+        # Placeholders and prompt suggestions are dim (SGR 2); typed text never is.
+        styled = run('tmux', 'capture-pane', '-p', '-e', '-t', pane['id']).splitlines()
+        typed, dim = [], False
+        for code, char in re.findall(r'\x1b\[([0-9;:]*)m|(.)', styled[y] if y < len(styled) else '', re.S):
+            if char:
+                typed.append(' ' if dim else char)
+            else:
+                for value in (code or '0').replace(':', ';').split(';'):
+                    dim = True if value == '2' else False if value in ('0', '', '22') else dim
+        content = ''.join(typed).replace('\xa0', ' ')
+        if x != 2 or not content.startswith('❯ ') or content[2:].strip():
+            raise Refused('电脑端输入框已有内容或状态无法确认，请在控制面板核对；未覆盖原输入')
+
+
 def composer(pane, require_empty, text=""):
     if "\x1b" in text:
         raise Refused("控制字符无效")
+    if pane.get('agent') == 'claude':
+        return claude_composer(pane, require_empty, text)
     # Fail closed for menus/approvals or an existing desktop draft.
     info = run('tmux', 'display-message', '-p', '-t', pane['id'], '#{cursor_x}:#{cursor_y}').strip().split(':')
     screen = run('tmux', 'capture-pane', '-p', '-t', pane['id']).splitlines()
@@ -558,7 +735,13 @@ def composer(pane, require_empty, text=""):
 
 
 def startup_identity(pane, *, allow_rollout=False):
-    """Bind a not-yet-recorded Codex to its exact live process, not its directory."""
+    """Bind a not-yet-recorded agent to its exact live process, not its directory."""
+    if pane.get('agent') == 'claude':
+        pid, start, _, _, path = claude_session(pane, required=False)
+        if path is not None and not allow_rollout:
+            raise Refused('Claude Code 会话记录已出现，请稍候进入聊天')
+        identity = f"{pane['id']}:{pane['pid']}:{pane['serverPid']}:claude:{pid}:{start}"
+        return 'startup:' + hashlib.sha256(identity.encode()).hexdigest()
     todo, visited, codex = [pane['pid']], set(), []
     while todo and len(visited) < 128:
         pid = todo.pop()
@@ -609,13 +792,13 @@ def startup_handle(request, pane):
             ready = True
         except (Refused, ValueError):
             ready = False
-        return {'ok': True, 'startupToken': token, 'screen': screen,
+        return {'ok': True, 'startupToken': token, 'screen': screen, 'agent': pane.get('agent', 'codex'),
                 'screenToken': screen_token(screen), 'inputReady': ready}
     if request.get('startupToken') != token:
-        raise Refused('启动中的 Codex 进程已变化，请重新打开窗格')
+        raise Refused('启动中的智能体进程已变化，请重新打开窗格')
     screen = clean(run('tmux', 'capture-pane', '-p', '-t', pane['id']))[-14000:]
     if request.get('screenToken') != screen_token(screen):
-        raise Refused('Codex 启动画面已变化，请查看新画面')
+        raise Refused('启动画面已变化，请查看新画面')
     if action == 'startup_key':
         key = request.get('key')
         if key not in ('Up', 'Down', 'Left', 'Right', 'Enter', 'Escape', 'Tab', 'BTab', 'Space'):
@@ -628,7 +811,7 @@ def startup_handle(request, pane):
             raise Refused('已进入输入框，请直接发送消息')
         target(request)
         if startup_identity(pane) != token:
-            raise Refused('Codex 进程已变化，未发送按键')
+            raise Refused('智能体进程已变化，未发送按键')
         run('tmux', 'send-keys', '-t', pane['id'], key)
         return {'ok': True}
     if action != 'startup_send':
@@ -647,14 +830,14 @@ def startup_handle(request, pane):
         run('tmux', 'load-buffer', '-b', buffer, '-', data=text.encode())
         target(request)
         if startup_identity(pane, allow_rollout=True) != token:
-            raise Refused('Codex 进程已变化，未发送')
+            raise Refused('智能体进程已变化，未发送')
         composer(pane, True)
         touched = True
         run('tmux', 'paste-buffer', '-p', '-d', '-b', buffer, '-t', pane['id'])
         time.sleep(0.2)
         target(request)
         if startup_identity(pane, allow_rollout=True) != token:
-            raise Refused('Codex 进程已变化')
+            raise Refused('智能体进程已变化')
         composer(pane, False, text)
         run('tmux', 'send-keys', '-t', pane['id'], 'Enter')
         return {'ok': True, 'submitted': True}
@@ -1016,6 +1199,8 @@ def attachment_message(request, binding):
 
 def handle(request, source=None):
     pane = target(request)
+    request['pane'] = pane  # Later rechecks also require the same agent kind.
+    agent = pane.get('agent', 'codex')
     if request.get('action') in ('startup_snapshot', 'startup_key', 'startup_send'):
         return startup_handle(request, pane)
     binding, stream, meta = locate(pane)
@@ -1025,8 +1210,10 @@ def handle(request, source=None):
             raise Refused('运行会话已变化，请返回列表重新打开')
         action = request.get('action')
         if action == 'snapshot':
-            reply = public_messages(stream, request.get('before'), request.get('after'), details=True)
-            reply.update(ok=True, binding=binding, threadId=meta['id'])
+            reply = public_messages(stream, request.get('before'), request.get('after'), details=True, agent=agent)
+            reply.update(ok=True, binding=binding, threadId=meta['id'], agent=agent)
+            if agent == 'claude' and meta.get('status') in ('busy', 'idle'):
+                reply['status'] = 'working' if meta['status'] == 'busy' else 'idle'
             if request.get('screen'):
                 screen = clean(run('tmux', 'capture-pane', '-p', '-t', pane['id']))[-14000:]
                 reply['screen'] = screen
@@ -1036,18 +1223,21 @@ def handle(request, source=None):
                     reply['inputReady'] = True
                 except (Refused, ValueError):
                     reply['inputReady'] = False
-                reply['question'] = native_question(screen)
+                reply['question'] = native_question(screen) if agent == 'codex' else None
                 footer = '\n'.join(screen.rstrip().splitlines()[-12:])
-                reply['questionClosed'] = bool(QUESTION_OPEN.search(footer))
-                reply['questionHint'] = reply['questionClosed'] or ('enter submit' in footer and bool(QUESTION_SKIP.search(footer)))
+                reply['questionClosed'] = agent == 'codex' and bool(QUESTION_OPEN.search(footer))
+                reply['questionHint'] = reply['questionClosed'] or (agent == 'codex' and 'enter submit' in footer and bool(QUESTION_SKIP.search(footer)))
             if request.get('includeSkills'):
-                reply['skills'] = skills(meta.get('cwd', str(Path.home())))
+                reply['skills'] = skills(meta.get('cwd', str(Path.home())), agent)
+                reply['skillPrefix'] = '/' if agent == 'claude' else '$'
             while reply.get('skills') and len(json.dumps(reply, ensure_ascii=False).encode()) > 250000:
                 reply['skills'].pop()
             target(request)
             return reply
         if action == 'upload' and expected == binding and source is not None:
             return upload_attachment(request, pane, binding, source)
+        if action in ('question_leave', 'question_submit') and agent != 'codex':
+            raise Refused('该智能体的问题请在控制面板中回答')
         if action == 'question_leave' and expected == binding:
             return leave_question(request, pane, binding)
         if action == 'question_submit' and expected == binding:
@@ -1112,4 +1302,4 @@ if __name__ == '__main__':
     except Refused as e:
         print(json.dumps({'ok': False, 'error': str(e)}, ensure_ascii=False))
     except Exception:
-        print(json.dumps({'ok': False, 'error': '会话适配失败；需要 Linux、Python 3.9+ 和可读取的 Codex 会话记录'}, ensure_ascii=False))
+        print(json.dumps({'ok': False, 'error': '会话适配失败；需要 Linux、Python 3.9+ 和可读取的 Codex / Claude Code 会话记录'}, ensure_ascii=False))

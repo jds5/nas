@@ -29,7 +29,16 @@ data class Pane(val id: String, val pid: Long, val serverPid: Long, val session:
         require(pid > 0 && serverPid > 0)
     }
     val identity: String get() = "$serverPid:$id:$pid"
-    val canWrite: Boolean get() = command == "codex"
+    val canWrite: Boolean get() = command in Agents.names
+    val agentName: String get() = Agents.label(command)
+}
+
+/** Terminal agents identified by tmux pane_current_command. Claude Code is the default. */
+object Agents {
+    const val DEFAULT = "claude"
+    val names = linkedMapOf("claude" to "Claude Code", "codex" to "Codex")
+    fun label(code: String?): String = names[code] ?: names.getValue(DEFAULT)
+    fun defaultArgs(code: String): String = if (code == "codex") "--yolo" else "--dangerously-skip-permissions"
 }
 
 enum class RemoteKey(val tmuxName: String) {

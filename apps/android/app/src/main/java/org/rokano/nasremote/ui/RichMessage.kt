@@ -23,7 +23,7 @@ import org.rokano.nasremote.core.messageBlocks
 
 @Suppress("DEPRECATION")
 @Composable
-fun Message(message: ChatItem, modifier: Modifier = Modifier) {
+fun Message(message: ChatItem, agent: String, modifier: Modifier = Modifier) {
     val user = message.role == "user"
     var expanded by remember(message.id) { mutableStateOf(false) }
     val attachmentBody = remember(message.id, message.text) { if (user) attachmentPresentation(message.text) else null }
@@ -36,7 +36,7 @@ fun Message(message: ChatItem, modifier: Modifier = Modifier) {
     val clipboard = LocalClipboardManager.current
     Column(modifier.fillMaxWidth(), horizontalAlignment = if (user) Alignment.End else Alignment.Start) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(when { user -> "你"; message.role == "command" -> "NAS 命令"; message.phase == "commentary" -> "Codex · 进展"; else -> "Codex" },
+            Text(when { user -> "你"; message.role == "command" -> "NAS 命令"; message.phase == "commentary" -> "$agent · 进展"; else -> agent },
                 style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             TextButton(onClick = { clipboard.setText(AnnotatedString(message.text)) }) { Text("复制") }
         }

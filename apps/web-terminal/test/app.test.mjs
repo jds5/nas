@@ -267,6 +267,20 @@ test('history snapshots read tmux scrollback without entering copy mode or sendi
   } finally { ws.close(); await once(ws, 'close'); }
 });
 
+test('sessions report the foreground agent and Claude Code gets agent mode', { timeout: 10000 }, async () => {
+  await copyFile('/bin/cat', `${dir}/claude`); await chmod(`${dir}/claude`, 0o755);
+  await tmux.command(['new-session', '-d', '-s', 'claude-test', `${dir}/claude`]);
+  const sessions = await tmux.list();
+  assert.equal(sessions.find(x => x.name === 'claude-test').agent, 'claude');
+  assert.equal(sessions.find(x => x.name === 'web-test').agent, null);
+  const assertion = await token(), ref = sessions.find(x => x.name === 'claude-test');
+  const ws = wsConnect(assertion, await reservation(assertion, ref)); const messages = [];
+  ws.on('message', raw => messages.push(JSON.parse(raw)));
+  try {
+    await waitFor(() => messages.some(m => m.type === 'mode' && m.mode === 'claude'));
+  } finally { ws.close(); await once(ws, 'close'); await tmux.command(['kill-session', '-t', 'claude-test']); }
+});
+
 test('Codex reading is bound to current epoch, cancels on switch and rejects shell history', async () => {
   let resolveRead, called = 0, aborted = false;
   const conversation = { read: async (_request, signal) => {

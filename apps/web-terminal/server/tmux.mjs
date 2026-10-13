@@ -3,6 +3,8 @@ import { promisify } from 'node:util';
 import { stat } from 'node:fs/promises';
 import pty from 'node-pty';
 const exec = promisify(execFile);
+// Foreground commands that get the message box, images and conversation reading.
+export const AGENTS = ['claude', 'codex'];
 
 export class Tmux {
   constructor(socket = '/run/host-tmux/default') { this.socket = socket; }
@@ -15,17 +17,18 @@ export class Tmux {
   async list() {
     const info = await stat(this.socket);
     if (!info.isSocket()) throw new Error('socket_unavailable');
-    const output = await this.command(['list-sessions', '-F', '#{session_id}\t#{session_created}\t#{pid}\t#{session_windows}\t#{session_attached}']);
+    const output = await this.command(['list-sessions', '-F', '#{session_id}\t#{session_created}\t#{pid}\t#{session_windows}\t#{session_attached}\t#{pane_current_command}']);
     const rows = output.split('\n').filter(Boolean).slice(0, 100);
     const sessions = [];
     for (const row of rows) {
-      const [id, created, pid, windows, attached] = row.split('\t');
+      const [id, created, pid, windows, attached, command = ''] = row.split('\t');
       if (!/^\$\d+$/.test(id) || ![created, pid, windows, attached].every(x => /^\d+$/.test(x))) throw new Error('invalid_session');
       const name = await this.command(['display-message', '-p', '-t', id, '#{session_name}']);
       // tmux changes socket permissions on attach/detach, which changes ctime.
       // Birth time + inode identify replacement without invalidating a live session.
       sessions.push({ id, generation: `${info.dev}:${info.ino}:${info.birthtimeMs}:${pid}:${created}`,
-        name: name.replace(/[\x00-\x1f\x7f]/g, '').slice(0, 160), windows: Number(windows), attached: Number(attached) });
+        name: name.replace(/[\x00-\x1f\x7f]/g, '').slice(0, 160), windows: Number(windows), attached: Number(attached),
+        agent: AGENTS.includes(command) ? command : null });
     }
     return sessions;
   }

@@ -1,4 +1,4 @@
-"""Bounded tmux/Codex lifecycle commands for the NAS Remote SSH client.
+"""Bounded tmux/Codex/Claude Code lifecycle commands for the NAS Remote SSH client.
 
 JSON is read from stdin. No listener or persistent service is installed.
 """
@@ -25,6 +25,8 @@ STATE = HOME / '.cache' / 'nas-remote-lifecycle'
 BACKGROUND = []  # Keep detached worker handles alive until this short SSH exec exits.
 NAME = re.compile(r'[A-Za-z][A-Za-z0-9_-]{0,39}')
 UUID = re.compile(r'[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}')
+AGENTS = {'claude': 'Claude Code', 'codex': 'Codex'}
+CLAUDE_HOME = HOME / '.claude'
 
 
 class Refused(Exception):
@@ -96,23 +98,31 @@ def clone_name(url):
     return name
 
 
-def codex_binary():
-    candidates = [shutil.which('codex'), str(HOME / '.local' / 'bin' / 'codex'), '/usr/local/bin/codex']
+def valid_agent(value):
+    # Older app versions omit the field and only knew Codex.
+    agent = 'codex' if value is None else value
+    if agent not in AGENTS:
+        raise Refused('智能体类型无效')
+    return agent
+
+
+def agent_binary(agent):
+    candidates = [shutil.which(agent), str(HOME / '.local' / 'bin' / agent), '/usr/local/bin/' + agent]
     for candidate in candidates:
         if candidate and Path(candidate).is_file() and os.access(candidate, os.X_OK):
             return candidate
-    raise Refused('NAS 上找不到 Codex CLI；请检查 ~/.local/bin/codex')
+    raise Refused(f'NAS 上找不到 {AGENTS[agent]} CLI；请检查 ~/.local/bin/{agent}')
 
 
-def codex_args(value):
+def agent_args(value):
     if not isinstance(value, str) or len(value) > 500 or any(ord(c) < 32 or ord(c) == 127 for c in value):
-        raise Refused('Codex 启动参数无效')
+        raise Refused('启动参数无效')
     try:
         args = shlex.split(value)
     except ValueError:
-        raise Refused('Codex 启动参数引号未闭合')
+        raise Refused('启动参数引号未闭合')
     if len(args) > 24 or any(len(arg) > 200 for arg in args):
-        raise Refused('Codex 启动参数过长')
+        raise Refused('启动参数过长')
     return args
 
 
@@ -142,7 +152,46 @@ def one_pane(session):
     return panes[0]
 
 
-def saved_threads():
+def claude_meta(path):
+    """Session id, cwd and first timestamp from a bounded transcript prefix."""
+    info = path.stat()
+    if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or path.is_symlink():
+        return None
+    ident = path.stem
+    with path.open('rb') as stream:
+        for raw in stream.readlines(262144)[:200]:
+            try:
+                record = json.loads(raw)
+            except ValueError:
+                continue
+            if record.get('sessionId') == ident and isinstance(record.get('cwd'), str) and record.get('timestamp'):
+                return dict(id=ident, path=record['cwd'], created=str(record['timestamp'])[:25], file=str(path), inode=info.st_ino)
+    return None
+
+
+def claude_threads():
+    base = CLAUDE_HOME / 'projects'
+    if not base.is_dir():
+        return []
+    found = []
+    for count, path in enumerate(base.glob('*/*.jsonl')):
+        if count >= 3000:
+            break
+        if not UUID.fullmatch(path.stem):
+            continue
+        try:
+            item = claude_meta(path)
+        except (OSError, ValueError, TypeError):
+            continue
+        if item:
+            found.append(item)
+    found.sort(key=lambda item: item['created'], reverse=True)
+    return found[:80]
+
+
+def saved_threads(agent='codex'):
+    if agent == 'claude':
+        return claude_threads()
     base = HOME / '.codex' / 'sessions'
     if not base.is_dir():
         return []
@@ -170,9 +219,16 @@ def saved_threads():
     return found[:80]
 
 
-def thread(ident):
+def thread(ident, agent='codex'):
     if not isinstance(ident, str) or not UUID.fullmatch(ident):
-        raise Refused('Codex 会话 UUID 无效')
+        raise Refused('会话 UUID 无效')
+    if agent == 'claude':
+        base = CLAUDE_HOME / 'projects'
+        matches = [m for m in (claude_meta(path) for path in base.glob('*/' + ident + '.jsonl')) if m] if base.is_dir() else []
+        if len(matches) != 1:
+            raise Refused('找不到唯一的历史会话记录')
+        matches[0]['path'] = str(project(matches[0]['path']))
+        return matches[0]
     base = HOME / '.codex' / 'sessions'
     matches = []
     for path in base.rglob('rollout-*' + ident + '.jsonl'):
@@ -191,6 +247,20 @@ def thread(ident):
         raise Refused('找不到唯一的历史会话记录')
     matches[0]['path'] = str(project(matches[0]['path']))
     return matches[0]
+
+
+def claude_session_running(ident):
+    # Claude Code registers each live interactive process as sessions/<pid>.json.
+    for record in (CLAUDE_HOME / 'sessions').glob('*.json'):
+        try:
+            state = json.loads(record.read_text())
+            pid = state.get('pid')
+            if state.get('sessionId') == ident and type(pid) is int and record.stem == str(pid) and \
+                    (Path('/proc') / str(pid) / 'comm').read_text().strip() == 'claude':
+                return True
+        except (OSError, ValueError, AttributeError):
+            continue
+    return False
 
 
 def thread_file_open(path):
@@ -283,8 +353,9 @@ def proposal(req):
     mode = req.get('mode')
     if mode not in ('restore_pane', 'new_pane', 'restore_new', 'existing', 'empty', 'clone'):
         raise Refused('操作类型无效')
-    codex = codex_binary()
-    args = codex_args(req.get('args', ''))
+    agent = valid_agent(req.get('agent'))
+    binary = agent_binary(agent)
+    args = agent_args(req.get('args', ''))
     item = None
     pane = None
     url = git_url(req.get('url')) if mode == 'clone' else ''
@@ -293,7 +364,7 @@ def proposal(req):
         session = valid_name(req.get('session'))
         pane = one_pane(session)
         if mode == 'restore_pane':
-            item = thread(req.get('thread'))
+            item = thread(req.get('thread'), agent)
             if pane['path'] != item['path']:
                 raise Refused('窗格目录与历史会话原目录不符')
             path = item['path']
@@ -301,7 +372,7 @@ def proposal(req):
             path = str(project(pane['path']))
         empty_shell(pane)
     elif mode == 'restore_new':
-        item = thread(req.get('thread'))
+        item = thread(req.get('thread'), agent)
         path = item['path']
         session = valid_name(req.get('session') or default_session(path))
     elif mode == 'existing':
@@ -315,15 +386,15 @@ def proposal(req):
         session = valid_name(req.get('session') or default_session(path))
     if mode not in ('restore_pane', 'new_pane') and any(p['session'] == session for p in current_panes()):
         raise Refused('tmux 名称已存在，请修改会话名称')
-    if item and thread_file_open(item['file']):
-        raise Refused('该 Codex 会话已在其他窗格运行')
+    if item and (claude_session_running(item['id']) if agent == 'claude' else thread_file_open(item['file'])):
+        raise Refused(f'该 {AGENTS[agent]} 会话已在其他窗格运行')
     pull = req.get('pull') is True
     if pull and mode != 'existing':
         raise Refused('只可更新已有目录')
     git = pull_preview(path) if pull else None
     result = dict(mode=mode, session=session, path=path, thread=item['id'] if item else '',
                   inode=item['inode'] if item else 0, url=url, branch=branch, pull=pull, git=git,
-                  args=args, codex=codex,
+                  args=args, agent=agent, binary=binary,
                   pane={k: pane[k] for k in ('id', 'pid', 'serverPid')} if pane else None)
     return result
 
@@ -392,11 +463,12 @@ def launch(p):
         if pane['path'] != path:
             raise Refused('原窗格目录已变化')
         empty_shell(pane)
-    codex = p['codex']
-    if not Path(codex).is_file() or not os.access(codex, os.X_OK):
-        raise Refused('Codex CLI 已变化或不可执行')
-    command = ' '.join(shlex.quote(part) for part in [codex, *p['args'],
-                      *(['resume', p['thread']] if p['thread'] else [])])
+    agent = p.get('agent', 'codex')
+    binary = p.get('binary') or p['codex']  # Status files written before Claude Code support.
+    if not Path(binary).is_file() or not os.access(binary, os.X_OK):
+        raise Refused(f'{AGENTS[agent]} CLI 已变化或不可执行')
+    resume = (['--resume', p['thread']] if agent == 'claude' else ['resume', p['thread']]) if p['thread'] else []
+    command = ' '.join(shlex.quote(part) for part in [binary, *p['args'], *resume])
     tmux('send-keys', '-l', '-t', pane['id'], command)
     tmux('send-keys', '-t', pane['id'], 'Enter')
     return {k: pane[k] for k in ('id', 'pid', 'serverPid', 'session', 'path')}
@@ -513,7 +585,8 @@ def handle(req):
     if action == 'panes':
         return {'ok': True, 'panes': current_panes()}
     if action == 'threads':
-        return {'ok': True, 'threads': [{k: t[k] for k in ('id', 'path', 'created')} for t in saved_threads()]}
+        agent = valid_agent(req.get('agent'))
+        return {'ok': True, 'threads': [{k: t[k] for k in ('id', 'path', 'created')} for t in saved_threads(agent)]}
     if action == 'prepare':
         p = proposal(req)
         return {'ok': True, 'proposal': p, 'digest': digest(p)}

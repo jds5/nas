@@ -28,16 +28,24 @@ import org.rokano.nasremote.RemoteState
 import org.rokano.nasremote.RemoteViewModel
 import org.rokano.nasremote.core.RemoteKey
 
-private val commands = listOf(
+private val codexCommands = listOf(
     "skills" to "浏览此主机的技能", "status" to "查看 Codex 会话状态",
     "model" to "选择模型", "permissions" to "调整权限", "review" to "代码审查",
     "compact" to "压缩会话上下文", "diff" to "查看改动", "help" to "Codex 帮助",
+)
+private val claudeCommands = listOf(
+    "skills" to "浏览此主机的技能", "status" to "查看 Claude Code 状态",
+    "model" to "选择模型", "permissions" to "调整权限", "context" to "查看上下文用量",
+    "compact" to "压缩会话上下文", "review" to "代码审查", "help" to "Claude Code 帮助",
 )
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ChatScreen(state: RemoteState, model: RemoteViewModel, attachmentActions: AttachmentActions) {
     val pane = state.selected ?: return
+    val agent = pane.agentName
+    val codex = pane.command == "codex"
+    val commands = if (codex) codexCommands else claudeCommands
     val list = rememberLazyListState()
     val scope = rememberCoroutineScope()
     var skillsOpen by remember(pane.identity) { mutableStateOf(false) }
@@ -89,10 +97,10 @@ fun ChatScreen(state: RemoteState, model: RemoteViewModel, attachmentActions: At
                     state.chatError != null -> "会话读取需要处理"
                     state.catchingUp -> "正在补读断线期间的消息…"
                     state.startupPending -> "消息已提交，正在关联会话记录…"
-                    state.startupToken != null && state.inputReady -> "Codex 输入已就绪"
-                    state.startupToken != null -> "Codex 正在初始化，请处理下方提示"
+                    state.startupToken != null && state.inputReady -> "$agent 输入已就绪"
+                    state.startupToken != null -> "$agent 正在初始化，请处理下方提示"
                     state.binding == null -> "正在关联原会话…"
-                    state.activity == "working" -> "Codex 正在处理"
+                    state.activity == "working" -> "$agent 正在处理"
                     state.activity == "idle" -> "本轮已结束"
                     state.activity == "interrupted" -> "本轮已中断"
                     else -> "已连接原会话"
@@ -112,7 +120,7 @@ fun ChatScreen(state: RemoteState, model: RemoteViewModel, attachmentActions: At
             color = MaterialTheme.colorScheme.secondaryContainer, shape = RoundedCornerShape(16.dp),
             modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
             Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                Text("Codex 启动选项", style = MaterialTheme.typography.titleSmall)
+                Text("$agent 启动选项", style = MaterialTheme.typography.titleSmall)
                 Text("查看当前提示后手动选择；更新与信任目录由你决定。", style = MaterialTheme.typography.bodySmall)
                 SelectionContainer {
                     Text(state.output.joinToString("\n").ifBlank { "正在读取启动画面…" },
@@ -136,7 +144,7 @@ fun ChatScreen(state: RemoteState, model: RemoteViewModel, attachmentActions: At
             modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
             Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
-                    Text("Codex 需要你的回答", style = MaterialTheme.typography.titleSmall)
+                    Text("$agent 需要你的回答", style = MaterialTheme.typography.titleSmall)
                     Text(state.question?.title ?: "点击查看问题并选择回答", maxLines = 2, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodyMedium)
                 }
                 FilledTonalButton(onClick = { model.openQuestions(state.screenToken) }, enabled = !state.busy) { Text("回答") }
@@ -147,9 +155,9 @@ fun ChatScreen(state: RemoteState, model: RemoteViewModel, attachmentActions: At
                 if ((state.historyBefore ?: 0) > 0) TextButton(onClick = model::loadHistory, enabled = !state.loadingHistory && state.messages.size < 300) {
                     Text(if (state.messages.size >= 300) "已显示 300 条，更多内容请用终端查看" else if (state.loadingHistory) "正在读取…" else "查看更早的消息")
                 }
-                if (state.messages.isEmpty() && state.binding != null) Text("暂未读到公开消息，可继续向 Codex 提问。", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                if (state.messages.isEmpty() && state.binding != null) Text("暂未读到公开消息，可继续向 $agent 提问。", color = MaterialTheme.colorScheme.onSurfaceVariant)
                 if (state.messages.isEmpty() && state.startupToken != null && state.inputReady && !state.startupPending)
-                    Text("尚未读到会话记录，可向当前 Codex 发送消息。", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text("尚未读到会话记录，可向当前 $agent 发送消息。", color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             items(state.messages, key = { it.id }) { message ->
                 Column {
@@ -157,7 +165,7 @@ fun ChatScreen(state: RemoteState, model: RemoteViewModel, attachmentActions: At
                         Text("以下为未读消息", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
                         HorizontalDivider(Modifier.padding(vertical = 8.dp))
                     }
-                    Message(message)
+                    Message(message, agent)
                 }
             }
         }
@@ -171,7 +179,7 @@ fun ChatScreen(state: RemoteState, model: RemoteViewModel, attachmentActions: At
                 if (state.answered.isNotBlank()) Text(state.answered, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
                 if (state.delivery.isNotBlank()) Text(when (state.delivery) {
                     "sending" -> "正在发送…"
-                    "submitted" -> "已提交到 Codex 输入端"
+                    "submitted" -> "已提交到 $agent 输入端"
                     "uncertain" -> "发送结果待核对，未自动重发"
                     "rejected" -> "未发送，草稿已保留"
                     "reviewed" -> "已人工核对上次操作"
@@ -192,7 +200,7 @@ fun ChatScreen(state: RemoteState, model: RemoteViewModel, attachmentActions: At
                 }
                 Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedTextField(state.draft, model::draft, enabled = !state.busy && canType && !state.startupPending, modifier = Modifier.weight(1f), shape = RoundedCornerShape(24.dp),
-                        placeholder = { Text("向 Codex 发送消息…") }, minLines = 1, maxLines = 6)
+                        placeholder = { Text("向 $agent 发送消息…") }, minLines = 1, maxLines = 6)
                     Button(onClick = {
                         if (state.draft.trim() == "/skills") { skillsOpen = true; model.draft("") }
                         else model.send()
@@ -200,7 +208,7 @@ fun ChatScreen(state: RemoteState, model: RemoteViewModel, attachmentActions: At
                 }
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     TextButton(onClick = { skillsOpen = true }) { Text("/ 技能") }
-                    Text(if (state.draft.startsWith('!')) "在 NAS 执行命令 · 使用 Codex 当前权限" else "输入 / 使用命令，! 执行 NAS 命令", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f))
+                    Text(if (state.draft.startsWith('!')) "在 NAS 执行命令 · 使用 $agent 当前权限" else "输入 / 使用命令，! 执行 NAS 命令", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f))
                 }
             }
         }
@@ -209,11 +217,11 @@ fun ChatScreen(state: RemoteState, model: RemoteViewModel, attachmentActions: At
         Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(bottom = 24.dp)) {
             Text("技能", style = MaterialTheme.typography.headlineSmall)
             OutlinedTextField(skillQuery, { skillQuery = it }, label = { Text("搜索技能") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-            Text("来自 NAS 的 SKILL.md；选择后以 Codex 的 \$技能名发送。实际可用性由当前会话决定。", Modifier.padding(vertical = 8.dp), style = MaterialTheme.typography.bodySmall)
+            Text("来自 NAS 的 SKILL.md；选择后以 $agent 的 ${state.skillPrefix}技能名发送。实际可用性由当前会话决定。", Modifier.padding(vertical = 8.dp), style = MaterialTheme.typography.bodySmall)
             LazyColumn(Modifier.heightIn(max = 360.dp)) {
-                if (state.skills.isEmpty()) item { Text("未发现技能。可在控制面板使用 Codex 的 /skills 菜单。") }
+                if (state.skills.isEmpty()) item { Text(if (codex) "未发现技能。可在控制面板使用 Codex 的 /skills 菜单。" else "未发现技能。可在 ~/.claude/skills 或项目 .claude/skills 中添加。") }
                 items(state.skills.filter { it.name.contains(skillQuery, true) || it.description.contains(skillQuery, true) }, key = { it.name }) { skill ->
-                    TextButton(onClick = { model.draft("\$${skill.name} " + state.draft); skillsOpen = false }, modifier = Modifier.fillMaxWidth()) {
+                    TextButton(onClick = { model.draft("${state.skillPrefix}${skill.name} " + state.draft); skillsOpen = false }, modifier = Modifier.fillMaxWidth()) {
                         Column(Modifier.fillMaxWidth()) {
                             Text(skill.name, fontWeight = FontWeight.SemiBold)
                             Text(skill.description, style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
@@ -221,7 +229,7 @@ fun ChatScreen(state: RemoteState, model: RemoteViewModel, attachmentActions: At
                     }
                 }
             }
-            TextButton(onClick = { model.draft("/skills"); model.send(); skillsOpen = false }, enabled = writable && state.binding != null && state.chatError == null) { Text("打开 Codex 原菜单") }
+            if (codex) TextButton(onClick = { model.draft("/skills"); model.send(); skillsOpen = false }, enabled = writable && state.binding != null && state.chatError == null) { Text("打开 Codex 原菜单") }
         }
     }
     QuestionSheet(state, model)
@@ -240,7 +248,7 @@ fun ChatScreen(state: RemoteState, model: RemoteViewModel, attachmentActions: At
                 }
             }
             if (state.uncertain) Button(onClick = model::acknowledge, enabled = state.screenToken != null) { Text("已核对结果，恢复操作") }
-            Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())) {
+            if (codex) Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())) {
                 FilledTonalButton(onClick = { model.key(RemoteKey.ShiftLeft, state.screenToken) }, enabled = panelWritable) { Text("打开 / 下一题 ⇧←") }
                 TextButton(onClick = { model.key(RemoteKey.AltDown, state.screenToken) }, enabled = panelWritable) { Text("上一题 / 返回 Alt↓") }
             }
@@ -262,7 +270,7 @@ fun ChatScreen(state: RemoteState, model: RemoteViewModel, attachmentActions: At
                 }
             }
             Row {
-                TextButton(onClick = { confirmationToken = state.screenToken; skip = true }, enabled = panelWritable) { Text("跳过此题…") }
+                if (codex) TextButton(onClick = { confirmationToken = state.screenToken; skip = true }, enabled = panelWritable) { Text("跳过此题…") }
                 TextButton(onClick = { confirmationToken = state.screenToken; interrupt = true }, enabled = panelWritable) { Text("中断…") }
                 TextButton(onClick = { model.terminal(true) }, enabled = !state.busy) { Text("切换终端模式") }
             }

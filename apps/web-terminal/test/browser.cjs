@@ -32,6 +32,13 @@ async function until(check) {
         await until(async () => await page.locator('#state').textContent() === '已连接' && await page.locator('#session-name').textContent() === name);
       };
       await page.goto('http://terminal-fixture:3000/terminal');
+      // The preferred agent (default Claude Code) is listed first; every agent session is labelled.
+      await until(async () => await page.locator('#sessions .session').count() === 4);
+      assert.match(await page.locator('#sessions .session').first().textContent(), /claude-chat.*Claude Code/);
+      await page.locator('#agent-codex').click();
+      assert.match(await page.locator('#sessions .session').first().textContent(), /codex-images.*Codex/);
+      await page.locator('#agent-claude').click();
+      assert.equal(await page.locator('#agent-claude').getAttribute('aria-pressed'), 'true');
       await choose('demo-project');
       assert.equal(await page.locator('.keyboard-bar, #paste, #keyboard').count(), 0);
       assert.equal(await page.locator('#connection-kind').textContent(), 'tmux');
@@ -109,6 +116,8 @@ async function until(check) {
         await until(async () => (await page.locator('#attachments').textContent()).includes('已上传'));
         await page.getByRole('button', { name: '移除', exact: true }).click();
       }
+      await choose('claude-chat'); await until(async () => await page.locator('#composer').isVisible() && await page.locator('#attach').isVisible());
+      assert.equal(await page.locator('#history-chat').textContent(), 'Claude Code 对话');
       await choose('demo-project'); await page.locator('#toggle-composer').click(); await page.locator('#draft').fill("seq 1 60000; printf 'FLOW_%s_OK\\n' 'END'");
       await page.locator('#draft').press('Enter');
       await until(() => output.includes('FLOW_END_OK'));
@@ -193,7 +202,7 @@ async function until(check) {
       assert.equal(wsCount, sshConnections, 'temporary SSH must not recreate a shell automatically');
       assert.match(await page.locator('#notice').textContent(), /临时 SSH 已关闭/);
       await page.close();
-      console.log(`${label}: single-WebSocket switching / drafts / Enter / Ctrl+J / IME / images / clipboard / drop / flow-control / reconnect / heartbeat / auto-recovery-no-replay / fixed-deadline / cancel-retry / SSH-no-recovery / read-only history / Markdown / table / pagination / safe links / copy-code / wheel-no-input / desktop controls PASS`);
+      console.log(`${label}: single-WebSocket switching / drafts / Enter / Ctrl+J / IME / images / clipboard / drop / flow-control / reconnect / heartbeat / auto-recovery-no-replay / fixed-deadline / cancel-retry / SSH-no-recovery / read-only history / Markdown / table / pagination / safe links / copy-code / wheel-no-input / desktop controls / Claude Code agent mode PASS`);
     }
   } finally { await browser.close(); }
 })().catch(error => { console.error('Browser acceptance failed:', error.stack); process.exit(1); });

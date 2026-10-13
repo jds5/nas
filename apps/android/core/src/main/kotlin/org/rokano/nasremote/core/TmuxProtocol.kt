@@ -11,13 +11,14 @@ object TmuxProtocol {
     }.filterNotNull().toList()
 
     private fun guard(p: Pane, write: Boolean): String {
-        val expected = "${p.pid}:${p.serverPid}:0" + if (write) ":codex" else ""
+        // Write targets are restricted to known agent names, so the command is shell-safe.
+        val expected = "${p.pid}:${p.serverPid}:0" + if (write) ":${p.command.also { require(p.canWrite) }}" else ""
         val format = "#{pane_pid}:#{pid}:#{pane_dead}" + if (write) ":#{pane_current_command}" else ""
         return "[ \"\$(tmux display-message -p -t ${p.id} '$format')\" = '$expected' ]"
     }
     fun capture(p: Pane) = "${guard(p, false)} && tmux capture-pane -p -J -t ${p.id} -S -300"
     fun key(p: Pane, key: RemoteKey): String {
-        require(p.canWrite) { "首版仅支持控制 Codex 窗格" }
+        require(p.canWrite) { "仅支持控制 Codex / Claude Code 窗格" }
         return "${guard(p, true)} && tmux send-keys -t ${p.id} ${key.tmuxName}"
     }
     fun validatePaste(text: String): ByteArray {

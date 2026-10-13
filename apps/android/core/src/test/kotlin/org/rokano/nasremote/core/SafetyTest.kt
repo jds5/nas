@@ -38,6 +38,17 @@ class SafetyTest {
         assertThrows(IllegalArgumentException::class.java) { Pane("%1;id", 1, 2, "", "codex", "") }
         assertThrows(IllegalArgumentException::class.java) { TmuxProtocol.paste(pane, "x;id") }
         assertThrows(IllegalArgumentException::class.java) { TmuxProtocol.key(pane.copy(command = "bash"), RemoteKey.Enter) }
+        // A shell-looking command name never enters the guard, even if tmux reported it.
+        assertThrows(IllegalArgumentException::class.java) { TmuxProtocol.key(pane.copy(command = "codex';id'"), RemoteKey.Enter) }
+    }
+    @Test fun claudeCodePanesAreWritableWithTheirOwnGuard() {
+        val claude = pane.copy(command = "claude")
+        assertTrue(claude.canWrite)
+        assertEquals("Claude Code", claude.agentName)
+        assertTrue(TmuxProtocol.key(claude, RemoteKey.Enter).contains("120:80:0:claude'"))
+        assertFalse(TmuxProtocol.key(claude, RemoteKey.Enter).contains(":codex"))
+        assertEquals("--dangerously-skip-permissions", Agents.defaultArgs(Agents.DEFAULT))
+        assertEquals("claude", Agents.DEFAULT)
     }
     @Test fun parserSkipsDeadPanesAndRejectsMalformedRecords() {
         val panes = TmuxProtocol.parsePanes("%4\t120\t80\t0\tnas\tcodex\t/work\n%5\t121\t80\t1\told\tbash\t/tmp\n")

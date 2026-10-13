@@ -4,8 +4,8 @@
 
 ## 页面能力
 
-- 会话列表与刷新；连接现有会话，完整显示 Codex 等终端程序，包括首次启动和确认选项。
-- 非 Codex 窗格默认收起输入框并聚焦原生终端，支持 Tab、方向键、Ctrl+C 和全屏程序；“展开输入框”可手动输入长文本。每 1.5 秒检测前台程序，Codex 显示消息框，退出后返回普通终端。
+- 会话列表与刷新；连接现有会话，完整显示 Claude Code、Codex 等终端程序，包括首次启动和确认选项。会话栏“智能体”开关（默认 Claude Code，保存在本浏览器）决定哪类会话排在前面并标注；不改变服务端判定。
+- 非智能体窗格默认收起输入框并聚焦原生终端，支持 Tab、方向键、Ctrl+C 和全屏程序；“展开输入框”可手动输入长文本。每 1.5 秒检测前台程序，前台为 `claude` 或 `codex` 时显示消息框，退出后返回普通终端。
 - “＋ 临时 SSH”直接新建 NAS shell，不经过 tmux，即使没有 tmux 会话也能用；关闭页面、断开或切换都会关闭该 SSH。重新连接会新建 shell。
 - PC 专用：默认 156 px 高的可拖高输入框，Enter 发送、Ctrl+J 换行，输入法确认不发送；移除手机按键栏。
 - PNG/JPEG/WebP 图片选择、拖放、剪贴板粘贴和预览；每条消息最多 4 张，总量 20 MiB。
@@ -49,7 +49,7 @@
 cd /home/yao/code/nas/apps/web-terminal
 docker build --target test -t nas-web-terminal:test .
 docker run --rm --init --cap-drop ALL --security-opt no-new-privileges nas-web-terminal:test
-docker build -t nas-web-terminal:0.5.3 .
+docker build -t nas-web-terminal:0.6.0 .
 ```
 
 测试使用隔离 tmux server 和临时 RSA 测试密钥，覆盖错误/缺失 JWT、exp/nbf/iss/aud、身份、Origin/CSRF、重放、真实终端输入输出与 resize、断开与到期后会话存活。测试密钥不进入生产镜像；无环境变量免鉴权开关。
@@ -177,3 +177,11 @@ tmux 的 1006、1012、1013、4000 异常关闭可按 1/3/8 秒延迟自动恢�
 ## 页面版本（0.5.3）
 
 主界面顶部显示当前加载前端的版本号（如 v0.5.3），构建时直接读取 package.json 的 version，避免手动维护重复版本。升级后刷新页面即可核对；旧页面显示旧版本时，刷新后再连接。
+
+## Claude Code 支持（0.6.0，2026-10-13）
+
+前台为 `claude`（Claude Code 原生安装）或 `codex` 的 tmux 窗格都进入智能体模式：消息框、图片和“对话”阅读均可用，标题随前台程序显示“Claude Code 对话”或“Codex 对话”。会话列表接口新增只读 `agent` 字段（活动窗格的前台命令仅限 `claude` / `codex`，其他为空），会话栏的“智能体”开关仅在浏览器本地排序和标注，不新增写入入口。
+
+Claude Code 对话由安卓桥接同一逻辑读取：按 `~/.claude/sessions/<pid>.json` 关联进程（核对 PID 与启动时间），再读 `~/.claude/projects/*/<会话ID>.jsonl`；只展示用户/助手正文、`!` 命令和本地命令输出（作为“命令输出”纯文本），排除工具调用/结果、思考、meta 和子代理记录。读取器升级为 `~/.local/share/nas-web-terminal/reader-0.6.0/`，`reader-0.5.0` 保留用于回滚。
+
+部署：`sh deploy/setup-reader.sh`，`docker build -t nas-web-terminal:0.6.0 .`，`docker compose up -d --no-build`。回滚：将 `compose.yaml` 的两处镜像改回 `nas-web-terminal:0.5.3` 后 `docker compose up -d --no-build`（0.5.3 镜像固定读取 `reader-0.5.0`）。实施与验证见[运维记录](../../docs/operations/2026-10-13-Claude-Code接入手机与网页终端.md)。

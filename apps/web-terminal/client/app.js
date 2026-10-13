@@ -21,9 +21,13 @@ const drafts = new Map();
 const maxBytes = 20 * 1024 * 1024;
 let opened = false, socket, selected, connecting = false, ready = false, revision = 0, epoch = 0;
 let sessions = [], switchQueued, composing = false, frameScheduled = false, lastSize = '';
-let terminalMode = true, manualComposer = false;
+let terminalMode = true, manualComposer = false, agent = null;
+// Running panes are detected server-side; the preference only orders and labels the list.
+const AGENT_NAMES = { claude: 'Claude Code', codex: 'Codex' };
+let agentPreference = AGENT_NAMES[preference('agent-preference', 'claude')] ? preference('agent-preference', 'claude') : 'claude';
+const agentName = () => AGENT_NAMES[agent] || AGENT_NAMES[agentPreference];
 let expires = 0, historyOpen = false, historyTimer, historyMode = 'terminal';
-const chat = conversationView({ send: sendFrame, connected });
+const chat = conversationView({ send: sendFrame, connected, agentName });
 let pendingAck = 0, ackTimer, submission;
 let heartbeatTimer, retryTimer, retryAttempts = 0, recoveryDeadline = 0, lastReceived = 0, connectionId = '', uncertainSend = false;
 function cancelRecovery() { clearTimeout(retryTimer); retryTimer = undefined; retryAttempts = 0; recoveryDeadline = 0; }
@@ -49,11 +53,13 @@ function updateState(text) {
 }
 function focusInput() { if ($('composer').hidden) term.focus(); else $('draft').focus(); }
 function setMode(mode) {
-  terminalMode = mode !== 'codex';
+  agent = AGENT_NAMES[mode] ? mode : null;
+  terminalMode = !agent;
+  $('history-chat').textContent = `${agentName()} 对话`;
   $('composer').hidden = terminalMode && !manualComposer;
   $('attach').hidden = terminalMode;
   $('toggle-composer').textContent = $('composer').hidden ? '展开输入框' : '收起输入框';
-  $('hint').textContent = selected?.kind === 'ssh' ? '临时 SSH：断开、切换或连接到期会关闭登录 shell；重新连接会新建。' : terminalMode ? '直接在终端输入；支持 Tab、方向键、Ctrl+C 和全屏程序。' : '点击终端操作 Codex 菜单；上滚查看只读历史。';
+  $('hint').textContent = selected?.kind === 'ssh' ? '临时 SSH：断开、切换或连接到期会关闭登录 shell；重新连接会新建。' : terminalMode ? '直接在终端输入；支持 Tab、方向键、Ctrl+C 和全屏程序。' : `点击终端操作 ${agentName()} 菜单；上滚查看只读历史。`;
   resize();
 }
 function sendFrame(frame) { if (socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ ...frame, epoch })); }
@@ -95,7 +101,7 @@ function historyTab(mode) {
   $('history-wrap').hidden = isChat;
   $('history-chat').setAttribute('aria-pressed', String(isChat));
   $('history-terminal').setAttribute('aria-pressed', String(!isChat));
-  document.querySelector('.history-tip').textContent = isChat ? 'Codex 原始消息 · Markdown 阅读 · 返回终端可处理菜单与输入' : '最近最多 1000 行及当前屏幕；Shift＋滚轮或底部滚动条横向查看。';
+  document.querySelector('.history-tip').textContent = isChat ? `${agentName()} 原始消息 · Markdown 阅读 · 返回终端可处理菜单与输入` : '最近最多 1000 行及当前屏幕；Shift＋滚轮或底部滚动条横向查看。';
   if (isChat) { chat.open(); $('conversation-content').focus(); }
   else {
     $('history-content').textContent = '正在读取历史…'; $('history-content').focus();
@@ -159,13 +165,22 @@ async function api(path, payload) {
   if (!response.ok) throw Object.assign(new Error(data.error || '请求失败，请重试。'), { status: response.status });
   return data;
 }
+function chooseAgent(value) {
+  agentPreference = value; savePreference('agent-preference', value);
+  for (const name of Object.keys(AGENT_NAMES)) $(`agent-${name}`).setAttribute('aria-pressed', String(name === value));
+  if (!agent) $('history-chat').textContent = `${agentName()} 对话`;
+  renderSessions();
+}
+for (const name of Object.keys(AGENT_NAMES)) $(`agent-${name}`).onclick = () => chooseAgent(name);
 function renderSessions() {
   $('sessions').replaceChildren();
-  for (const session of sessions) {
+  const rank = s => s.agent === agentPreference ? 0 : s.agent ? 1 : 2;
+  for (const session of [...sessions].sort((a, b) => rank(a) - rank(b))) {
     const button = document.createElement('button'); button.className = 'session';
     button.classList.toggle('selected', key(selected) === key(session));
     const name = document.createElement('strong'); name.textContent = session.name;
-    const detail = document.createElement('span'); detail.textContent = `${session.windows} 个窗口`;
+    const detail = document.createElement('span'); detail.textContent = `${session.agent ? AGENT_NAMES[session.agent] + ' · ' : ''}${session.windows} 个窗口`;
+    button.classList.toggle('preferred', session.agent === agentPreference);
     button.append(name, detail); button.onclick = () => connect(session); $('sessions').append(button);
   }
 }
@@ -173,7 +188,8 @@ async function refresh() {
   $('refresh').disabled = true;
   try {
     ({ sessions } = await api('/terminal/manage/api/sessions')); renderSessions();
-    $('list-status').textContent = sessions.length ? `${sessions.length} 个会话可连接` : '暂无 tmux 会话，请先通过 SSH 创建。';
+    const preferred = sessions.filter(s => s.agent === agentPreference).length;
+    $('list-status').textContent = sessions.length ? `${sessions.length} 个会话可连接，${preferred} 个正在运行 ${AGENT_NAMES[agentPreference]}` : '暂无 tmux 会话，请先通过 SSH 创建。';
   } catch (e) { $('list-status').textContent = e.message; }
   finally { $('refresh').disabled = false; }
 }
@@ -361,7 +377,7 @@ function upload(item, target) {
 }
 function addFiles(files) {
   if (!connected() || submission) { notify('请先连接会话。'); return; }
-  if (terminalMode) { notify('图片仅支持 tmux 中前台运行的 Codex。'); return; }
+  if (terminalMode) { notify('图片仅支持 tmux 中前台运行的 Claude Code 或 Codex。'); return; }
   const d = draft(), picked = [...files];
   if (!picked.length) return;
   if (d.files.length + picked.length > 4 || picked.some(f => !['image/png', 'image/jpeg', 'image/webp'].includes(f.type) || f.size === 0) ||
@@ -400,4 +416,4 @@ $('fullscreen').onclick = async () => {
 };
 new ResizeObserver(resize).observe($('terminal-wrap'));
 window.addEventListener('pagehide', detach);
-setMode('terminal'); updateState('尚未连接'); refresh();
+chooseAgent(agentPreference); setMode('terminal'); updateState('尚未连接'); refresh();
