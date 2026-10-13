@@ -25,7 +25,7 @@ systemctl --user disable --now nas-app-download.service
 ```bash
 python3 apps/android/distribution/serve.py \
   --bind 192.168.50.33 --allow 192.168.50.0/24 --port 8765 \
-  --apk apps/android/distribution/build/nas-remote-0.6.0.apk --version 0.6.0
+  --apk apps/android/distribution/build/nas-remote-0.6.1.apk --version 0.6.1
 ```
 
 ## 更新安装包
@@ -36,9 +36,9 @@ python3 apps/android/distribution/serve.py \
 mkdir -p apps/android/distribution/build
 apksigner sign --ks "$HOME/.android/debug.keystore" --ks-key-alias androiddebugkey \
   --ks-pass pass:android --key-pass pass:android \
-  --out apps/android/distribution/build/nas-remote-0.6.0.apk \
+  --out apps/android/distribution/build/nas-remote-0.6.1.apk \
   apps/android/app/build/outputs/apk/release/app-release-unsigned.apk
-apksigner verify --verbose apps/android/distribution/build/nas-remote-0.6.0.apk
+apksigner verify --verbose apps/android/distribution/build/nas-remote-0.6.1.apk
 ```
 
 `android` 是标准测试 keystore 的默认口令，不应用于正式发布密钥。更新版本时同步 App versionCode/versionName、服务参数中的文件和版本号，然后安装 unit、执行 `systemctl --user daemon-reload` 和 `restart`。服务运行中不会自动切换文件，避免页面校验值与下载内容不一致。
@@ -48,5 +48,7 @@ python3 -m unittest discover -s apps/android/distribution -v
 ```
 
 3 项测试覆盖下载内容/校验值、HEAD、非法路径和方法、Host 与来源范围。只提供 `/`、`/app.apk`、`/SHA256SUMS`，无目录索引、上传或命令执行接口。启动时读入 APK，最多 64 MiB，连接读超时 10 秒；用户服务限制内存和任务数。
+
+手机浏览器打不开本页面、表现为立即拒绝时，先检查 Android 的“本地网络 / 附近设备”权限是否授予浏览器（2026-10-14 实际原因即此，服务端无需修改），以及手机是否开启代理/VPN：经 NAS 上的 Mihomo 代理访问时来源变为容器地址，会被来源网段校验拒绝。
 
 HTTP 仅用于可信家庭 LAN 的个人分发；同页校验值不是独立来源证明。来源网段检查也不能阻止一个把外部请求 SNAT 成 LAN 地址的路由器/代理，因此不要转发 8765、不要经反代发布、不要放入密钥。APK 只包含应用，不内置 NAS 私钥或个人连接配置。

@@ -115,6 +115,7 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
     private var client: SshTmuxClient? = null
     private var importedKey: ByteArray? = null
     private var poll: Job? = null
+    private val wake = kotlinx.coroutines.channels.Channel<Unit>(kotlinx.coroutines.channels.Channel.CONFLATED)
     @Volatile private var epoch = 0
     @Volatile private var foreground = true
     private var pickerTarget: AttachmentTarget? = null
@@ -314,6 +315,8 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
             } finally { key.fill(0); pass.fill(0) }
         }
     }
+    /** Informational banners can be dismissed; a pending verification stays until it is reviewed. */
+    fun dismissMessage() { if (!state.value.uncertain) mutable.update { it.copy(message = null) } }
     fun chooseAgent(value: String) {
         if (value !in Agents.names || state.value.lifecycleBusy) return
         settings.edit { putString("agent", value) }
@@ -472,6 +475,7 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
         rememberSession()
         selection++
         mutable.update { it.copy(selected = null, output = emptyList()) }
+        wake.trySend(Unit)
     }
     fun draft(text: String) {
         if (state.value.busy) return
@@ -728,6 +732,7 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
                         questionDrafts.remove(memoKey(s.binding.orEmpty()) + ":" + s.answerQuestion)
                         mutable.update { it.copy(questionChoice = null, answered = "回答已提交到 ${pane.agentName} 输入端") }
                     }
+                    wake.trySend(Unit)
                     mutable.update { it.copy(busy = false, questionsOpen = if (closeQuestions) false else it.questionsOpen, draft = if (clearDraft) "" else it.draft, message = if (clearDraft) null else successMessage, delivery = if (clearDraft) "submitted" else it.delivery, screenToken = null, answerDraft = if (clearAnswer) "" else it.answerDraft) }
                     rememberSession()
                 }
@@ -749,6 +754,9 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
         val token = epoch
         poll = viewModelScope.launch {
             var cycle = 0
+            // Back off to 2–3 s only while nothing on screen changes; any change or action resets to 1 s.
+            var quiet = 0
+            var lastSignature = 0
             while (foreground && token == epoch && state.value.connected) {
                 try {
                     val snapshot = state.value
@@ -759,7 +767,8 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
                     val expected = snapshot.binding ?: restore?.binding
                     val cursor = expected?.let { cursors[memoKey(it)] ?: restore?.anchorByte?.takeIf { n -> n > 0 } }
                     val result = withContext(Dispatchers.IO) { io.withLock {
-                        val panes = if (cycle % 5 == 0) remote.panes() else null
+                        // The pane list is the screen itself when nothing is selected; otherwise refresh it occasionally.
+                        val panes = if (cycle % 5 == 0 || pane == null) remote.panes() else null
                         val lines = pane?.takeIf { snapshot.terminal }?.let { remote.capture(it).lineSequence().takeLastBounded(400) }
                         val chat = pane?.takeIf { !snapshot.terminal && it.canWrite }?.let {
                             JSONObject(remote.bridge(request(it, "snapshot", expected)
@@ -832,7 +841,12 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
                         if (initial || state.value.messages != snapshot.messages) rememberSession()
                     }
                     cycle++
-                    delay(if (state.value.catchingUp) 150 else 1000)
+                    val now = state.value
+                    val signature = java.util.Objects.hash(now.selected?.identity, now.binding, now.messages.lastOrNull()?.id, now.messages.size,
+                        now.screenToken, now.output.hashCode(), now.activity, now.question?.id, now.inputReady, interaction, selection)
+                    quiet = if (signature == lastSignature && now.activity != "working" && !now.busy) quiet + 1 else 0
+                    lastSignature = signature
+                    kotlinx.coroutines.withTimeoutOrNull(when { now.catchingUp -> 150L; quiet < 5 -> 1000L; quiet < 20 -> 2000L; else -> 3000L }) { wake.receive() }
                 } catch (e: Exception) {
                     if (e is CancellationException) throw e
                     if (token != epoch) break

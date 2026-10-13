@@ -11,6 +11,7 @@ import java.net.Socket
 import java.net.InetSocketAddress
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
+import java.security.MessageDigest
 import java.util.UUID
 
 class PinnedHostKeys(private val expected: String) : HostKeyRepository {
@@ -32,10 +33,49 @@ class PinnedHostKeys(private val expected: String) : HostKeyRepository {
     override fun getHostKey(host: String?, type: String?): Array<HostKey> = emptyArray()
 }
 
+/**
+ * A bundled Python program, cached on the NAS under ~/.cache/nas-remote by content hash.
+ * Every run re-hashes the cached bytes and only executes them when they match the APK copy,
+ * so each poll sends a ~1 KB loader instead of the whole script. No service is installed.
+ */
+internal class CachedScript(resource: String, private val name: String) {
+    val bytes: ByteArray = requireNotNull(SshTmuxClient::class.java.getResourceAsStream(resource)).use { it.readBytes() }
+    val sha: String = MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
+    init { require(Regex("[a-z_]{1,32}").matches(name) && bytes.size <= 262_144) }
+    private fun python(code: String) = "python3 -c '" + code.replace("'", "'\"'\"'") + "' $name $sha"
+    val run = python(VERIFY + "\nsys.argv=[p];exec(compile(d,p,'exec'),{'__name__':'__main__'})")
+    val check = python(VERIFY)
+    val install = python(INSTALLER)
+    companion object {
+        const val MISSING = 97
+        // Exit 97 when the cached copy is missing, foreign, writable by others or not this exact hash.
+        private const val VERIFY = """import hashlib,os,stat,sys
+p=os.path.expanduser('~/.cache/nas-remote/%s-%s.py'%(sys.argv[1],sys.argv[2]))
+try:
+ fd=os.open(p,os.O_RDONLY|os.O_NOFOLLOW);st=os.fstat(fd)
+ if not stat.S_ISREG(st.st_mode) or st.st_uid!=os.getuid() or st.st_mode&0o077 or st.st_size>262144:os.close(fd);sys.exit(97)
+ with os.fdopen(fd,'rb') as f:d=f.read()
+except OSError:sys.exit(97)
+if hashlib.sha256(d).hexdigest()!=sys.argv[2]:sys.exit(97)"""
+        private const val INSTALLER = """import hashlib,os,stat,sys,uuid
+d=sys.stdin.buffer.read(262145)
+if len(d)>262144 or hashlib.sha256(d).hexdigest()!=sys.argv[2]:sys.exit(3)
+root=os.path.expanduser('~/.cache/nas-remote');os.makedirs(root,0o700,exist_ok=True)
+st=os.lstat(root)
+if not stat.S_ISDIR(st.st_mode) or st.st_uid!=os.getuid() or st.st_mode&0o077:sys.exit(4)
+t=os.path.join(root,'.tmp-'+uuid.uuid4().hex);fd=os.open(t,os.O_WRONLY|os.O_CREAT|os.O_EXCL,0o600)
+with os.fdopen(fd,'wb') as f:f.write(d);f.flush();os.fsync(f.fileno())
+os.replace(t,os.path.join(root,'%s-%s.py'%(sys.argv[1],sys.argv[2])))
+for n in os.listdir(root):
+ if n.startswith(sys.argv[1]+'-') and n!='%s-%s.py'%(sys.argv[1],sys.argv[2]):os.unlink(os.path.join(root,n))"""
+    }
+}
+
 /** Blocking transport: call on an IO dispatcher. close() may be called to abort IO. */
 class SshTmuxClient : AutoCloseable {
     @Volatile private var session: Session? = null
     @Volatile private var identity: JSch? = null
+    private val installed = java.util.Collections.synchronizedSet(mutableSetOf<String>())
 
     fun connect(profile: ConnectionProfile, key: ByteArray, passphrase: ByteArray) {
         profile.validate()
@@ -55,6 +95,7 @@ class SshTmuxClient : AutoCloseable {
         open(profile, jsch)
     }
     private fun open(profile: ConnectionProfile, jsch: JSch) {
+        installed.clear() // A new SSH session re-verifies the NAS cache once.
         val pins = PinnedHostKeys(profile.fingerprint)
         jsch.setHostKeyRepository(pins)
         var stage = ConnectionStage.TCP
@@ -88,9 +129,27 @@ class SshTmuxClient : AutoCloseable {
         }
     }
 
-    /** Fixed bundled program; request data is carried only on stdin. No NAS installation. */
-    fun bridge(request: String): String = exec(bridgeCommand, (request + "\n").toByteArray(Charsets.UTF_8))
-    fun lifecycle(request: String): String = exec(lifecycleCommand, (request + "\n").toByteArray(Charsets.UTF_8))
+    /** Fixed bundled program; request data is carried only on stdin. */
+    fun bridge(request: String): String = runScript(bridgeScript, (request + "\n").toByteArray(Charsets.UTF_8))
+    fun lifecycle(request: String): String = runScript(lifecycleScript, (request + "\n").toByteArray(Charsets.UTF_8))
+
+    /** Installs the verified copy once per connection, then runs it through the small loader. */
+    private fun prepare(script: CachedScript) {
+        if (script.sha in installed) return
+        synchronized(installed) {
+            if (script.sha in installed) return
+            val (status, _) = execStatus(script.check, ByteArrayInputStream(ByteArray(0)), 10_000)
+            if (status != 0) check(execStatus(script.install, ByteArrayInputStream(script.bytes), 20_000).first == 0) { "无法在 NAS 缓存桥接程序，请检查 ~/.cache 权限" }
+            installed += script.sha
+        }
+    }
+    private fun runScript(script: CachedScript, input: ByteArray): String {
+        prepare(script)
+        val (status, output) = execStatus(script.run, ByteArrayInputStream(input), 10_000)
+        if (status == CachedScript.MISSING) { installed -= script.sha; error("NAS 上的桥接缓存已变化，请重试") }
+        check(status == 0) { "目标已变化、tmux 不可用或远端操作失败，请重新选择会话" }
+        return output
+    }
 
     fun upload(request: String, file: java.io.File, progress: (Long) -> Unit): String {
         require(file.length() in 1..20L * 1024 * 1024)
@@ -103,21 +162,15 @@ class SshTmuxClient : AutoCloseable {
                     return n
                 }
             }
+            prepare(bridgeScript)
             java.io.SequenceInputStream(ByteArrayInputStream((request + "\n").toByteArray()), counted).use {
-                return execStream(bridgeCommand, it, 125_000)
+                return execStream(bridgeScript.run, it, 125_000)
             }
         }
     }
 
-    private val bridgeCommand: String by lazy {
-        val script = requireNotNull(javaClass.getResourceAsStream("/nas_remote_bridge.py")).bufferedReader().use { it.readText() }
-        "python3 -c '" + script.replace("'", "'\"'\"'") + "'"
-    }
-
-    private val lifecycleCommand: String by lazy {
-        val script = requireNotNull(javaClass.getResourceAsStream("/nas_remote_lifecycle.py")).bufferedReader().use { it.readText() }
-        "python3 -c '" + script.replace("'", "'\"'\"'") + "'"
-    }
+    private val bridgeScript by lazy { CachedScript("/nas_remote_bridge.py", "bridge") }
+    private val lifecycleScript by lazy { CachedScript("/nas_remote_lifecycle.py", "lifecycle") }
 
     fun panes(): List<Pane> {
         val output = exec("${TmuxProtocol.LIST} 2>&1 || true")
@@ -136,6 +189,11 @@ class SshTmuxClient : AutoCloseable {
         return execStream(command, ByteArrayInputStream(input), 10_000)
     }
     private fun execStream(command: String, input: java.io.InputStream, timeoutMs: Long): String {
+        val (status, output) = execStatus(command, input, timeoutMs)
+        check(status == 0) { "目标已变化、tmux 不可用或远端操作失败，请重新选择会话" }
+        return output
+    }
+    private fun execStatus(command: String, input: java.io.InputStream, timeoutMs: Long): Pair<Int, String> {
         val s = session?.takeIf { it.isConnected } ?: error("连接已断开")
         val channel = s.openChannel("exec") as ChannelExec
         try {
@@ -163,8 +221,7 @@ class SshTmuxClient : AutoCloseable {
                 if (Thread.currentThread().isInterrupted) throw InterruptedException()
                 Thread.sleep(20)
             }
-            check(channel.exitStatus == 0) { "目标已变化、tmux 不可用或远端操作失败，请重新选择会话" }
-            return result.toString("UTF-8")
+            return channel.exitStatus to result.toString("UTF-8")
         } finally { channel.disconnect() }
     }
     fun pause() { session?.disconnect(); session = null }

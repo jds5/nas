@@ -7,6 +7,7 @@ import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
@@ -89,25 +90,6 @@ fun ChatScreen(state: RemoteState, model: RemoteViewModel, attachmentActions: At
     }
     val prefix = state.draft.takeIf { it.startsWith('/') && !it.contains(' ') && !it.contains('\n') }?.drop(1)
     Column(Modifier.fillMaxSize()) {
-        Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp), verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f)) {
-                Text(pane.session, style = MaterialTheme.typography.titleLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text(when {
-                    state.reconnecting -> "正在接回原会话…"
-                    state.chatError != null -> "会话读取需要处理"
-                    state.catchingUp -> "正在补读断线期间的消息…"
-                    state.startupPending -> "消息已提交，正在关联会话记录…"
-                    state.startupToken != null && state.inputReady -> "$agent 输入已就绪"
-                    state.startupToken != null -> "$agent 正在初始化，请处理下方提示"
-                    state.binding == null -> "正在关联原会话…"
-                    state.activity == "working" -> "$agent 正在处理"
-                    state.activity == "idle" -> "本轮已结束"
-                    state.activity == "interrupted" -> "本轮已中断"
-                    else -> "已连接原会话"
-                }, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-            TextButton(onClick = { model.panel(true) }) { Text("控制面板") }
-        }
         state.chatError?.let {
             Surface(color = MaterialTheme.colorScheme.errorContainer, shape = RoundedCornerShape(16.dp), modifier = Modifier.padding(16.dp)) {
                 Column(Modifier.padding(16.dp)) {
@@ -159,9 +141,10 @@ fun ChatScreen(state: RemoteState, model: RemoteViewModel, attachmentActions: At
                 if (state.messages.isEmpty() && state.startupToken != null && state.inputReady && !state.startupPending)
                     Text("尚未读到会话记录，可向当前 $agent 发送消息。", color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
-            items(state.messages, key = { it.id }) { message ->
+            // itemsIndexed: the unread divider needs the previous item without an O(n) indexOf per row.
+            itemsIndexed(state.messages, key = { _, it -> it.id }) { index, message ->
                 Column {
-                    if (state.seen.isNotBlank() && state.messages.getOrNull(state.messages.indexOf(message) - 1)?.id == state.seen) {
+                    if (state.seen.isNotBlank() && state.messages.getOrNull(index - 1)?.id == state.seen) {
                         Text("以下为未读消息", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
                         HorizontalDivider(Modifier.padding(vertical = 8.dp))
                     }
@@ -198,13 +181,14 @@ fun ChatScreen(state: RemoteState, model: RemoteViewModel, attachmentActions: At
                         }
                     }
                 }
-                Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Box(Modifier.padding(bottom = 4.dp)) { AttachmentMenu(state, attachmentActions) }
                     OutlinedTextField(state.draft, model::draft, enabled = !state.busy && canType && !state.startupPending, modifier = Modifier.weight(1f), shape = RoundedCornerShape(24.dp),
                         placeholder = { Text("向 $agent 发送消息…") }, minLines = 1, maxLines = 6)
-                    Button(onClick = {
+                    FilledIconButton(onClick = {
                         if (state.draft.trim() == "/skills") { skillsOpen = true; model.draft("") }
                         else model.send()
-                    }, enabled = canSend, modifier = Modifier.heightIn(min = 52.dp)) { Text("发送") }
+                    }, enabled = canSend, modifier = Modifier.padding(bottom = 4.dp).size(48.dp)) { Icon(AppIcons.Send, contentDescription = "发送") }
                 }
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     TextButton(onClick = { skillsOpen = true }) { Text("/ 技能") }
@@ -291,4 +275,22 @@ private suspend fun LazyListState.showLatest(index: Int, animate: Boolean = true
     val last = layoutInfo.visibleItemsInfo.lastOrNull { it.index == index } ?: return
     val remainder = (last.offset + last.size - layoutInfo.viewportEndOffset + layoutInfo.afterContentPadding).coerceAtLeast(0).toFloat()
     if (animate) animateScrollBy(remainder) else scrollBy(remainder)
+}
+
+/** One-line session status shown as the top app bar subtitle. */
+internal fun chatStatus(state: RemoteState): String {
+    val agent = state.selected?.agentName ?: "智能体"
+    return when {
+        state.reconnecting -> "正在接回原会话…"
+        state.chatError != null -> "会话读取需要处理"
+        state.catchingUp -> "正在补读断线期间的消息…"
+        state.startupPending -> "消息已提交，正在关联会话记录…"
+        state.startupToken != null && state.inputReady -> "$agent 输入已就绪"
+        state.startupToken != null -> "$agent 正在初始化，请处理提示"
+        state.binding == null -> "正在关联原会话…"
+        state.activity == "working" -> "$agent 正在处理"
+        state.activity == "idle" -> "本轮已结束"
+        state.activity == "interrupted" -> "本轮已中断"
+        else -> "已连接原会话"
+    }
 }

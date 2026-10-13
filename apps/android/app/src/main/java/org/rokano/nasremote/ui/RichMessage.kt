@@ -30,7 +30,7 @@ fun Message(message: ChatItem, agent: String, modifier: Modifier = Modifier) {
     val body = attachmentBody?.first ?: message.text
     val parsed = remember(body) { messageBlocks(body) }
     // Never cut a table mid-row through the generic long-message preview.
-    val long = parsed.none { it is MessageBlock.Table } && (body.length > 1600 || body.count { it == '\n' } > 32)
+    val long = remember(body, parsed) { parsed.none { it is MessageBlock.Table } && (body.length > 1600 || body.count { it == '\n' } > 32) }
     val visible = if (long && !expanded) body.take(1200).lines().take(24).joinToString("\n") else body
     val blocks = remember(visible, expanded) { if (long && !expanded) messageBlocks(visible) else parsed }
     val clipboard = LocalClipboardManager.current
@@ -38,7 +38,9 @@ fun Message(message: ChatItem, agent: String, modifier: Modifier = Modifier) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(when { user -> "你"; message.role == "command" -> "NAS 命令"; message.phase == "commentary" -> "$agent · 进展"; else -> agent },
                 style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            TextButton(onClick = { clipboard.setText(AnnotatedString(message.text)) }) { Text("复制") }
+            IconButton(onClick = { clipboard.setText(AnnotatedString(message.text)) }, modifier = Modifier.size(36.dp)) {
+                Icon(AppIcons.Copy, contentDescription = "复制消息", modifier = Modifier.size(18.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
         }
         Surface(color = if (user) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerLow,
             shape = RoundedCornerShape(20.dp), modifier = Modifier.widthIn(max = 720.dp)) {

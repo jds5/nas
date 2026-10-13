@@ -39,15 +39,26 @@ fun rememberAttachmentActions(model: RemoteViewModel): AttachmentActions {
         files = { launch { files.launch(arrayOf("*/*")) } })
 }
 
+private fun attachable(state: RemoteState) = state.connected && !state.busy && !state.reconnecting && !state.uncertain &&
+    !state.preparingAttachment && state.binding != null && state.attachments.size < 4
+
+/** Leading "+" of the composer: the three pickers live in a menu instead of a row of text buttons. */
+@Composable
+fun AttachmentMenu(state: RemoteState, actions: AttachmentActions) {
+    var open by remember { mutableStateOf(false) }
+    Box {
+        IconAction(AppIcons.Add, "添加附件", enabled = attachable(state)) { open = true }
+        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+            DropdownMenuItem(text = { Text("截图 / 相册") }, onClick = { open = false; actions.photos() })
+            DropdownMenuItem(text = { Text("拍照") }, onClick = { open = false; actions.camera() })
+            DropdownMenuItem(text = { Text("文件…") }, onClick = { open = false; actions.files() })
+        }
+    }
+}
+
 @Composable
 fun AttachmentComposer(state: RemoteState, model: RemoteViewModel, actions: AttachmentActions) {
-    val enabled = state.connected && !state.busy && !state.reconnecting && !state.uncertain && !state.preparingAttachment && state.binding != null && state.attachments.size < 4
     Column {
-        Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), verticalAlignment = Alignment.CenterVertically) {
-            TextButton(onClick = actions.photos, enabled = enabled) { Text("截图 / 相册") }
-            TextButton(onClick = actions.camera, enabled = enabled) { Text("拍照") }
-            TextButton(onClick = actions.files, enabled = enabled) { Text("文件…") }
-        }
         if (state.preparingAttachment) LinearProgressIndicator(Modifier.fillMaxWidth())
         if (state.attachments.isNotEmpty()) {
             Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {

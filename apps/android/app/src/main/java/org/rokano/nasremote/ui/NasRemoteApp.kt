@@ -14,7 +14,11 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
@@ -38,39 +42,61 @@ import org.rokano.nasremote.RemoteState
 import org.rokano.nasremote.RemoteViewModel
 import org.rokano.nasremote.core.*
 
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun NasRemoteApp(model: RemoteViewModel) {
     val state by model.state.collectAsStateWithLifecycle()
     val attachmentActions = rememberAttachmentActions(model)
     val screen = if (!state.connected) "connection" else if (state.lifecycleOpen) "lifecycle" else if (state.selected == null) "panes" else if (state.terminal) "terminal" else "chat"
-    BackHandler(state.lifecycleOpen && (!state.lifecycleBusy || state.lifecycleMachineStatus in listOf("cloning", "pulling"))) { model.closeLifecycle() }
+    val lifecycleLeavable = !state.lifecycleBusy || state.lifecycleMachineStatus in listOf("cloning", "pulling")
+    BackHandler(state.lifecycleOpen && lifecycleLeavable) { model.closeLifecycle() }
     BackHandler(state.selected != null && state.connected && !state.lifecycleOpen) { model.back() }
     NasTheme {
         Scaffold(
             topBar = {
+                val pane = state.selected
                 TopAppBar(title = {
+                    // Contextual title + one-line subtitle (M3 small top app bar), instead of a fixed brand.
                     Column {
-                        Text("接续", fontWeight = FontWeight.Bold)
-                        Text("NAS REMOTE", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(when (screen) {
+                            "connection" -> "接续"
+                            "panes" -> "会话"
+                            "lifecycle" -> when { state.lifecycleMode == "inspect" -> "启动结果"; state.lifecycleMode.startsWith("restore") -> "恢复历史"; else -> "新建会话" }
+                            else -> pane?.session.orEmpty()
+                        }, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(when (screen) {
+                            "connection" -> "NAS Remote"
+                            "panes" -> "${state.profile.user}@${state.profile.host}"
+                            "lifecycle" -> Agents.label(state.agent)
+                            "chat" -> chatStatus(state)
+                            else -> "${pane?.id} · 屏幕快照"
+                        }, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
                 }, navigationIcon = {
-                    if (state.lifecycleOpen) TextButton(onClick = model::closeLifecycle, enabled = !state.lifecycleBusy || state.lifecycleMachineStatus in listOf("cloning", "pulling")) { Text("返回") }
-                    else if (state.selected != null && state.connected) TextButton(onClick = model::back, enabled = !state.busy) { Text("返回") }
+                    if (state.lifecycleOpen) IconAction(AppIcons.Back, "返回", enabled = lifecycleLeavable, onClick = model::closeLifecycle)
+                    else if (pane != null && state.connected) IconAction(AppIcons.Back, "返回", enabled = !state.busy, onClick = model::back)
                 }, actions = {
-                    if (state.selected?.canWrite == true && state.connected) TextButton(onClick = { model.terminal(!state.terminal) }, enabled = !state.busy) { Text(if (state.terminal) "聊天" else "终端") }
-                    if (state.connected) TextButton(onClick = { model.disconnect() }) { Text("断开") }
+                    if (screen == "chat") IconAction(AppIcons.Tune, "回答与控制") { model.panel(true) }
+                    if (pane?.canWrite == true && screen in listOf("chat", "terminal")) {
+                        IconAction(if (state.terminal) AppIcons.Chat else AppIcons.Terminal, if (state.terminal) "聊天模式" else "终端模式",
+                            enabled = !state.busy) { model.terminal(!state.terminal) }
+                    }
+                    if (state.connected) IconAction(AppIcons.Power, "断开连接") { model.disconnect() }
                 })
             },
         ) { padding ->
             Column(Modifier.fillMaxSize().padding(padding).imePadding()) {
-                AnimatedVisibility(state.busy) {
-                    LinearProgressIndicator(Modifier.fillMaxWidth())
-                }
-                state.message?.let { message ->
+                AnimatedVisibility(state.busy) { LinearProgressIndicator(Modifier.fillMaxWidth()) }
+                AnimatedVisibility(state.message != null) {
+                    val message = state.message.orEmpty()
                     Surface(color = if (state.uncertain) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.secondaryContainer,
-                        shape = RoundedCornerShape(16.dp), modifier = Modifier.padding(horizontal = 20.dp, vertical = 6.dp).fillMaxWidth()) {
-                        Text(message, Modifier.padding(14.dp), style = MaterialTheme.typography.bodyMedium)
+                        shape = RoundedCornerShape(12.dp), modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp).fillMaxWidth()) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(message, Modifier.weight(1f).padding(start = 16.dp, top = 12.dp, bottom = 12.dp, end = 4.dp), style = MaterialTheme.typography.bodyMedium)
+                            if (!state.uncertain) IconAction(AppIcons.Close, "关闭提示", onClick = model::dismissMessage)
+                        }
                     }
                 }
                 AnimatedContent(targetState = screen, label = "screen", modifier = Modifier.weight(1f), transitionSpec = {
@@ -87,6 +113,16 @@ fun NasRemoteApp(model: RemoteViewModel) {
                 }
             }
         }
+    }
+}
+
+/** Icon button with an M3 plain tooltip; the label is also the accessibility description. */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+internal fun IconAction(icon: ImageVector, label: String, enabled: Boolean = true, onClick: () -> Unit) {
+    TooltipBox(positionProvider = TooltipDefaults.rememberTooltipPositionProvider(TooltipAnchorPosition.Below), tooltip = { PlainTooltip { Text(label) } },
+        state = rememberTooltipState()) {
+        IconButton(onClick = onClick, enabled = enabled) { Icon(icon, contentDescription = label) }
     }
 }
 
@@ -108,7 +144,7 @@ private fun ConnectionScreen(state: RemoteState, model: RemoteViewModel) {
     LifecycleEventEffect(Lifecycle.Event.ON_STOP) { passphrase = "" }
     val permission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { networkAllowed = it }
     val import = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> uri?.let(model::importKey) }
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
         Spacer(Modifier.height(8.dp))
         Surface(color = MaterialTheme.colorScheme.primaryContainer, shape = RoundedCornerShape(28.dp), modifier = Modifier.fillMaxWidth()) {
             Column(Modifier.padding(24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -145,61 +181,103 @@ private fun ConnectionScreen(state: RemoteState, model: RemoteViewModel) {
         }, enabled = state.ready && state.hasKey && !state.busy, modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp)) {
             Text("接回 ${state.resumeTitle}", maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f)) {
-                Text("加密保存草稿", style = MaterialTheme.typography.titleSmall)
-                Text("可选：重启后恢复输入及回答草稿。口令和对话正文不保存。", style = MaterialTheme.typography.bodySmall)
-            }
-            Switch(checked = state.saveDrafts, onCheckedChange = model::saveDrafts, enabled = !state.busy && state.ready)
-        }
-        if (state.hasKey || state.message != null) TextButton(onClick = { forget = true }, enabled = !state.busy, modifier = Modifier.align(Alignment.CenterHorizontally)) { Text("清除本机连接资料") }
+        ListItem(headlineContent = { Text("加密保存草稿") }, supportingContent = { Text("重启后恢复输入及回答草稿；口令和对话正文不保存") },
+            trailingContent = { Switch(checked = state.saveDrafts, onCheckedChange = null) }, colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+            modifier = Modifier.selectable(state.saveDrafts, enabled = !state.busy && state.ready, role = Role.Switch) { model.saveDrafts(!state.saveDrafts) })
+        if (state.hasKey || state.message != null) TextButton(onClick = { forget = true }, enabled = !state.busy, modifier = Modifier.align(Alignment.CenterHorizontally),
+            colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)) { Text("清除本机连接资料") }
         Spacer(Modifier.height(20.dp))
     }
     if (forget) AlertDialog(onDismissRequest = { forget = false }, title = { Text("清除本机资料？") }, text = { Text("移除保存的连接、私钥、草稿与阅读位置。不会停止 NAS 上的任务；撤销登录权限仍需在 NAS 删除对应公钥。") }, confirmButton = { TextButton(onClick = { forget = false; model.forget() }) { Text("清除") } }, dismissButton = { TextButton(onClick = { forget = false }) { Text("取消") } })
 }
 
+
 @Composable
 private fun PanesScreen(state: RemoteState, model: RemoteViewModel) {
-    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        item {
-            Text("正在进行", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.SemiBold)
-            Text("${state.profile.user}@${state.profile.host}", Modifier.padding(top = 8.dp, bottom = 12.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
-            AgentSwitch(state, model)
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                FilledTonalButton(onClick = { model.openLifecycle("restore_new") }) { Text("恢复历史") }
-                Button(onClick = { model.openLifecycle("existing") }) { Text("新建项目会话") }
-            }
-            if (state.lifecycleOperation != null) TextButton(onClick = model::inspectLifecycle) { Text("查看上次启动结果") }
-        }
-        if (state.panes.isEmpty()) item {
-            Card(Modifier.fillMaxWidth()) {
-                Column(Modifier.padding(24.dp)) {
-                    Text("没有可连接的窗格", style = MaterialTheme.typography.titleMedium)
-                    Text("可从上方恢复历史对话，或为项目创建 tmux/${Agents.label(state.agent)} 会话。", Modifier.padding(top = 8.dp))
-                }
-            }
-        }
-        // Panes running the preferred agent first, then the other agent, then plain terminals.
-        val ordered = state.panes.sortedBy { if (it.command == state.agent) 0 else if (it.canWrite) 1 else 2 }
-        items(ordered, key = { it.identity }) { pane ->
-            Card(onClick = { model.select(pane) }, enabled = !state.busy, modifier = Modifier.fillMaxWidth().animateItem(), shape = RoundedCornerShape(24.dp)) {
-                Column(Modifier.padding(22.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(pane.session, Modifier.weight(1f), style = MaterialTheme.typography.titleLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        SuggestionChip(onClick = { model.select(pane) }, label = { Text(if (pane.canWrite) pane.agentName else "仅查看") })
-                    }
-                    Text(pane.path, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text("${pane.id}  ·  ${pane.command}", Modifier.weight(1f), style = MaterialTheme.typography.labelMedium)
-                        if (pane.canWrite) TextButton(onClick = { model.select(pane, terminal = true) }) { Text("终端模式") }
-                        else if (pane.command == "bash") TextButton(onClick = { model.openLifecycle("new_pane", pane) }) { Text("启动 ${Agents.label(state.agent)}") }
+    // Panes running the preferred agent first, then the other agent, then plain terminals.
+    val ordered = remember(state.panes, state.agent) { state.panes.sortedBy { if (it.command == state.agent) 0 else if (it.canWrite) 1 else 2 } }
+    Box(Modifier.fillMaxSize()) {
+        LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 96.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            item(key = "header") {
+                Column(Modifier.padding(bottom = 8.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    AgentSwitch(state, model)
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                        OutlinedButton(onClick = { model.openLifecycle("restore_new") }, contentPadding = ButtonDefaults.ButtonWithIconContentPadding) {
+                            Icon(AppIcons.History, null, Modifier.size(ButtonDefaults.IconSize)); Spacer(Modifier.width(ButtonDefaults.IconSpacing)); Text("恢复历史")
+                        }
+                        if (state.lifecycleOperation != null) TextButton(onClick = model::inspectLifecycle) { Text("上次启动结果") }
                     }
                 }
             }
+            if (state.panes.isEmpty()) item(key = "empty") {
+                OutlinedCard(Modifier.fillMaxWidth()) {
+                    ListItem(headlineContent = { Text("没有可连接的窗格") },
+                        supportingContent = { Text("恢复历史对话，或点“新建会话”为项目启动 ${Agents.label(state.agent)}。") },
+                        colors = ListItemDefaults.colors(containerColor = Color.Transparent))
+                }
+            }
+            items(ordered, key = { it.identity }) { pane ->
+                ElevatedCard(onClick = { model.select(pane) }, enabled = !state.busy, modifier = Modifier.fillMaxWidth().animateItem()) {
+                    ListItem(
+                        overlineContent = { Text(if (pane.canWrite) pane.agentName else "${pane.command} · 仅查看") },
+                        headlineContent = { Text(pane.session, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                        supportingContent = { Text("${pane.path}  ·  ${pane.id}", maxLines = 2, overflow = TextOverflow.Ellipsis) },
+                        leadingContent = { AgentAvatar(pane) },
+                        trailingContent = {
+                            if (pane.canWrite) IconAction(AppIcons.Terminal, "以终端模式打开", enabled = !state.busy) { model.select(pane, terminal = true) }
+                            else if (pane.command == "bash") TextButton(onClick = { model.openLifecycle("new_pane", pane) }) { Text("启动") }
+                        },
+                        colors = ListItemDefaults.colors(containerColor = Color.Transparent))
+                }
+            }
+            item(key = "footer") {
+                Text("共享原会话，请避免与电脑同时输入。", Modifier.padding(top = 8.dp, start = 4.dp),
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
         }
-        item { Text("共享原会话，请避免与电脑同时输入。", Modifier.padding(top = 8.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+        ExtendedFloatingActionButton(onClick = { model.openLifecycle("existing") }, icon = { Icon(AppIcons.Add, null) },
+            text = { Text("新建会话") }, modifier = Modifier.align(Alignment.BottomEnd).padding(16.dp))
     }
 }
+
+@Composable
+private fun AgentAvatar(pane: Pane) {
+    Surface(shape = CircleShape, modifier = Modifier.size(40.dp),
+        color = if (pane.canWrite) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerHighest) {
+        Box(contentAlignment = Alignment.Center) {
+            Text(when (pane.command) { "claude" -> "CC"; "codex" -> "Cx"; else -> ">_" },
+                style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
+        }
+    }
+}
+
+/** Preferred agent for new sessions and history; running panes are detected individually. */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun AgentSwitch(state: RemoteState, model: RemoteViewModel) {
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text("新建与恢复使用", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+            Agents.names.entries.forEachIndexed { index, (code, label) ->
+                SegmentedButton(selected = state.agent == code, onClick = { model.chooseAgent(code) }, enabled = !state.lifecycleBusy,
+                    shape = SegmentedButtonDefaults.itemShape(index, Agents.names.size)) { Text(label) }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ModeSwitch(options: List<Pair<String, String>>, selected: String, enabled: Boolean, onSelect: (String) -> Unit) {
+    SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+        options.forEachIndexed { index, (mode, label) ->
+            SegmentedButton(selected = selected == mode, onClick = { onSelect(mode) }, enabled = enabled,
+                shape = SegmentedButtonDefaults.itemShape(index, options.size)) { Text(label, maxLines = 1) }
+        }
+    }
+}
+
 
 @Composable
 private fun LifecycleScreen(state: RemoteState, model: RemoteViewModel) {
@@ -213,58 +291,62 @@ private fun LifecycleScreen(state: RemoteState, model: RemoteViewModel) {
     val agent = Agents.label(state.agent)
     var args by remember(mode, state.agent) { mutableStateOf(Agents.defaultArgs(state.agent)) }
     val restoring = mode.startsWith("restore")
+    val editable = !state.lifecycleBusy
     val choices = if (mode == "restore_pane") state.lifecycleThreads.filter { it.path == state.lifecyclePane?.path } else state.lifecycleThreads
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Text("恢复或启动 $agent", style = MaterialTheme.typography.headlineMedium)
-        Text("项目默认位于 NAS 的 ~/code；输入启动参数后直接执行。", style = MaterialTheme.typography.bodyMedium)
-        if (mode != "inspect") AgentSwitch(state, model)
-        if (mode in listOf("new_pane", "restore_pane")) Row(horizontalArrangement = Arrangement.Center) {
-            FilterChip(selected = mode == "new_pane", onClick = { model.openLifecycle("new_pane", state.lifecyclePane) }, label = { Text("新建对话") })
-            Spacer(Modifier.width(8.dp))
-            FilterChip(selected = mode == "restore_pane", onClick = { model.openLifecycle("restore_pane", state.lifecyclePane) }, label = { Text("恢复历史") })
-        }
-        if (mode in listOf("existing", "empty", "clone")) Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
-            FilterChip(selected = mode == "existing", onClick = { model.openLifecycle("existing") }, label = { Text("已有目录") })
-            FilterChip(selected = mode == "empty", onClick = { model.openLifecycle("empty") }, label = { Text("空目录") })
-            FilterChip(selected = mode == "clone", onClick = { model.openLifecycle("clone") }, label = { Text("Git 克隆") })
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+        if (mode != "inspect") {
+            AgentSwitch(state, model)
+            if (mode in listOf("new_pane", "restore_pane")) ModeSwitch(listOf("new_pane" to "新建对话", "restore_pane" to "恢复历史"), mode, editable) {
+                model.openLifecycle(it, state.lifecyclePane)
+            }
+            if (mode in listOf("existing", "empty", "clone")) ModeSwitch(listOf("existing" to "已有目录", "empty" to "空目录", "clone" to "Git 克隆"), mode, editable) {
+                model.openLifecycle(it)
+            }
+            Text("项目位于 NAS 的 ~/code；确认参数后直接启动。", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         if (restoring) {
-            Text(if (mode == "restore_pane") "在 ${state.lifecyclePane?.session} 中恢复" else "恢复历史对话", style = MaterialTheme.typography.titleLarge)
-            if (choices.isEmpty()) Text("没有可用的历史会话记录。", style = MaterialTheme.typography.bodyMedium)
-            choices.take(30).forEach { item ->
-                FilterChip(selected = thread == item.id, onClick = { thread = item.id },
-                    label = { Text("${item.path.substringAfterLast('/')} · ${item.id.takeLast(8)} · ${item.created}", maxLines = 1) })
+            Text(if (mode == "restore_pane") "在 ${state.lifecyclePane?.session} 中恢复" else "选择历史对话", style = MaterialTheme.typography.titleMedium)
+            OutlinedCard(Modifier.fillMaxWidth()) {
+                if (choices.isEmpty()) ListItem(headlineContent = { Text("没有可用的历史会话记录") }, colors = ListItemDefaults.colors(containerColor = Color.Transparent))
+                choices.take(30).forEach { item ->
+                    ListItem(
+                        headlineContent = { Text(item.path.substringAfterLast('/'), maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                        supportingContent = { Text("${item.created.take(16).replace('T', ' ')} · ${item.id.take(8)}", fontFamily = FontFamily.Monospace) },
+                        leadingContent = { RadioButton(selected = thread == item.id, onClick = null) },
+                        colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+                        modifier = Modifier.selectable(thread == item.id, enabled = editable, role = Role.RadioButton) { thread = item.id })
+                }
             }
-            OutlinedTextField(thread, { thread = it.trim().take(36) }, label = { Text("精确会话 UUID（也可手动填写）") },
-                singleLine = true, enabled = !state.lifecycleBusy, modifier = Modifier.fillMaxWidth())
+            OutlinedTextField(thread, { thread = it.trim().take(36) }, label = { Text("会话 UUID") },
+                supportingText = { Text("也可手动填写精确 UUID") }, singleLine = true, enabled = editable, modifier = Modifier.fillMaxWidth())
         }
         if (mode !in listOf("restore_pane", "new_pane", "inspect")) OutlinedTextField(session, { session = it.take(40) },
-            label = { Text("tmux 名称（留空使用项目名）") }, singleLine = true,
-            enabled = !state.lifecycleBusy, modifier = Modifier.fillMaxWidth())
+            label = { Text("tmux 名称") }, supportingText = { Text("留空使用项目名") }, singleLine = true, enabled = editable, modifier = Modifier.fillMaxWidth())
         if (mode == "existing" || mode == "empty") OutlinedTextField(path, { path = it.take(500) },
-            label = { Text(if (mode == "existing") "已有目录：相对 ~/code" else "新目录名：相对 ~/code") },
-            placeholder = { Text("work_doc") },
-            singleLine = true, enabled = !state.lifecycleBusy, modifier = Modifier.fillMaxWidth())
-        if (mode == "clone") OutlinedTextField(url, { url = it.take(500) }, label = { Text("Git HTTPS / SSH 仓库地址") },
-            supportingText = { Text("自动克隆到 ~/code/仓库名；同名目录存在则停止。") },
-            singleLine = true, enabled = !state.lifecycleBusy, modifier = Modifier.fillMaxWidth())
-        if (mode == "clone") OutlinedTextField(branch, { branch = it.take(128) }, label = { Text("分支（留空使用远端默认分支）") },
-            singleLine = true, enabled = !state.lifecycleBusy, modifier = Modifier.fillMaxWidth())
-        if (mode == "existing") Row(verticalAlignment = Alignment.CenterVertically) {
-            Checkbox(checked = pull, onCheckedChange = { pull = it }, enabled = !state.lifecycleBusy)
-            Text("先拉取已有 Git 仓库（仅快速前进）")
+            label = { Text(if (mode == "existing") "已有目录（相对 ~/code）" else "新目录名（相对 ~/code）") },
+            placeholder = { Text("work_doc") }, singleLine = true, enabled = editable, modifier = Modifier.fillMaxWidth())
+        if (mode == "clone") {
+            OutlinedTextField(url, { url = it.take(500) }, label = { Text("Git 仓库地址") },
+                supportingText = { Text("HTTPS / SSH；克隆到 ~/code/仓库名，同名目录存在则停止") }, singleLine = true, enabled = editable, modifier = Modifier.fillMaxWidth())
+            OutlinedTextField(branch, { branch = it.take(128) }, label = { Text("分支") }, supportingText = { Text("留空使用远端默认分支") },
+                singleLine = true, enabled = editable, modifier = Modifier.fillMaxWidth())
         }
-        if (mode != "inspect") OutlinedTextField(args, { args = it.take(500) }, label = { Text("$agent 启动参数") },
-            supportingText = { Text("默认 ${Agents.defaultArgs(state.agent)}（跳过权限确认${if (state.agent == "codex") "与沙箱" else ""}）；可删改。") }, singleLine = true,
-            enabled = !state.lifecycleBusy, modifier = Modifier.fillMaxWidth())
-        if (mode != "inspect") Button(onClick = { model.prepareLifecycle(session, path, thread, url, branch, pull, args) },
-            enabled = !state.lifecycleBusy && (!restoring || thread.isNotEmpty()), modifier = Modifier.fillMaxWidth()) { Text("启动 $agent") }
+        if (mode == "existing") ListItem(headlineContent = { Text("先拉取 Git 仓库") }, supportingContent = { Text("仅快速前进，工作树须干净") },
+            trailingContent = { Switch(checked = pull, onCheckedChange = null) }, colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+            modifier = Modifier.selectable(pull, enabled = editable, role = Role.Switch) { pull = !pull })
+        if (mode != "inspect") {
+            OutlinedTextField(args, { args = it.take(500) }, label = { Text("$agent 启动参数") },
+                supportingText = { Text("默认 ${Agents.defaultArgs(state.agent)}（跳过权限确认${if (state.agent == "codex") "与沙箱" else ""}）；可删改") },
+                singleLine = true, enabled = editable, modifier = Modifier.fillMaxWidth())
+            Button(onClick = { model.prepareLifecycle(session, path, thread, url, branch, pull, args) },
+                enabled = editable && (!restoring || thread.isNotEmpty()), modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text("启动 $agent") }
+        }
+        if (state.lifecycleBusy) LinearProgressIndicator(Modifier.fillMaxWidth())
         if (state.lifecycleStatus.isNotBlank()) Text(state.lifecycleStatus, style = MaterialTheme.typography.bodyMedium)
         if (mode == "inspect" && !state.lifecycleBusy && state.lifecycleOperation != null &&
             state.lifecycleMachineStatus !in listOf("cloning", "pulling", "starting", "cloned", "pulled"))
             TextButton(onClick = model::dismissLifecycleOperation) { Text("关闭此记录") }
-        if (state.lifecycleBusy) LinearProgressIndicator(Modifier.fillMaxWidth())
-        Text("结果不明确时请先检查目标窗格；本功能不会自动重试启动。", style = MaterialTheme.typography.bodySmall)
+        Text("结果不明确时请先检查目标窗格；不会自动重试启动。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
 
@@ -279,11 +361,7 @@ private fun TerminalScreen(state: RemoteState, model: RemoteViewModel) {
         if (follow && !list.isScrollInProgress && state.output.isNotEmpty()) list.scrollToItem(state.output.lastIndex)
     }
     Column(Modifier.fillMaxSize().padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f)) {
-                Text(pane.session, style = MaterialTheme.typography.titleLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text("${pane.id} · 屏幕快照，每秒更新", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
             FilterChip(selected = follow, onClick = { follow = !follow }, label = { Text("跟随输出") })
         }
         Surface(Modifier.fillMaxWidth().weight(1f), color = Color(0xFF121D19), contentColor = Color(0xFFE0EBE4), shape = RoundedCornerShape(22.dp)) {
@@ -321,14 +399,3 @@ private fun TerminalScreen(state: RemoteState, model: RemoteViewModel) {
     if (interrupt) AlertDialog(onDismissRequest = { interrupt = false }, title = { Text("中断当前操作？") }, text = { Text("向 ${pane.session} / ${pane.id} 发送 Ctrl-C，可能取消正在运行的操作。") }, confirmButton = { TextButton(onClick = { interrupt = false; model.key(RemoteKey.Interrupt) }) { Text("发送 Ctrl-C") } }, dismissButton = { TextButton(onClick = { interrupt = false }) { Text("取消") } })
 }
 
-/** Preferred agent for new sessions and history; running panes are detected individually. */
-@Composable
-private fun AgentSwitch(state: RemoteState, model: RemoteViewModel) {
-    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text("智能体", style = MaterialTheme.typography.labelLarge)
-        Agents.names.forEach { (code, label) ->
-            FilterChip(selected = state.agent == code, onClick = { model.chooseAgent(code) },
-                enabled = !state.lifecycleBusy, label = { Text(label) })
-        }
-    }
-}
