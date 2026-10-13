@@ -1,6 +1,9 @@
 import http from 'node:http';
-import { randomBytes } from 'node:crypto';
+import { randomBytes, createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
+import { promisify } from 'node:util';
+import { gzip as gzipCb, brotliCompress as brotliCb, constants as zlib } from 'node:zlib';
+const gzip = promisify(gzipCb), brotli = promisify(brotliCb);
 import { fileURLToPath } from 'node:url';
 import { WebSocketServer } from 'ws';
 import { connectTerminal, validSize } from './terminal.mjs';
@@ -21,6 +24,24 @@ const headers = {
   'Permissions-Policy': 'camera=(), microphone=(), geolocation=(), clipboard-read=(), clipboard-write=(self)',
   'Content-Security-Policy': "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; font-src 'self'; img-src 'self' data: blob:; frame-ancestors 'none'; base-uri 'none'; form-action 'none'",
 };
+// Built assets are immutable per image: read and compress once, then revalidate with ETag.
+// Every request is still authenticated first; `private, no-cache` keeps shared caches out.
+async function loadAsset(file) {
+  // Compression runs on the libuv pool, so the first request never blocks live terminals.
+  const raw = await readFile(`${staticRoot}${file}`);
+  const [gz, br] = await Promise.all([gzip(raw, { level: 9 }),
+    brotli(raw, { params: { [zlib.BROTLI_PARAM_QUALITY]: 11, [zlib.BROTLI_PARAM_SIZE_HINT]: raw.length } })]);
+  return { raw, gzip: gz, br, etag: `"${createHash('sha256').update(raw).digest('base64url').slice(0, 22)}"` };
+}
+const assets = new Map();
+function asset(file) {
+  if (!assets.has(file)) assets.set(file, loadAsset(file).catch(error => { assets.delete(file); throw error; }));
+  return assets.get(file);
+}
+function encoding(header = '') {
+  const accepted = new Set(String(header).split(',').map(x => x.split(';')[0].trim()));
+  return accepted.has('br') ? 'br' : accepted.has('gzip') ? 'gzip' : null;
+}
 function reply(res, code, value) {
   res.writeHead(code, { ...headers, 'Content-Type': 'application/json; charset=utf-8' });
   res.end(JSON.stringify(value));
@@ -58,8 +79,12 @@ export function createApp({ config, keyResolver, tmux = new Tmux(), uploads, ssh
       if (req.method === 'GET' || req.method === 'HEAD') {
         if (files.has(req.url)) {
           const [file, mime] = files.get(req.url);
-          const data = await readFile(`${staticRoot}${file}`);
-          res.writeHead(200, { ...headers, 'Content-Type': mime });
+          const item = await asset(file);
+          const common = { ...headers, 'Cache-Control': 'private, no-cache', ETag: item.etag, Vary: 'Accept-Encoding' };
+          if (req.headers['if-none-match'] === item.etag) { res.writeHead(304, common); return res.end(); }
+          const coding = encoding(req.headers['accept-encoding']);
+          const data = coding ? item[coding] : item.raw;
+          res.writeHead(200, { ...common, 'Content-Type': mime, 'Content-Length': data.length, ...(coding ? { 'Content-Encoding': coding } : {}) });
           return res.end(req.method === 'HEAD' ? undefined : data);
         }
         if (req.url === '/terminal/manage/api/sessions') {

@@ -2,6 +2,8 @@ import { randomBytes, createHash } from 'node:crypto';
 import { open, readdir, stat, unlink } from 'node:fs/promises';
 import path from 'node:path';
 export const MAX_IMAGE_BYTES = 20 * 1024 * 1024;
+// An upload can only be submitted on a connection, which lives at most 24 hours.
+const ENTRY_LIFETIME_MS = 24 * 60 * 60 * 1000;
 function refused(message, status = 400) { return Object.assign(new Error('upload_refused'), { publicMessage: message, status }); }
 export function imageType(bytes) {
   if (bytes.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))) return ['image/png', '.png'];
@@ -34,6 +36,8 @@ export class UploadStore {
     try { name = decodeURIComponent(req.headers['x-upload-name'] || '图片'); } catch { throw refused('文件名无效。'); }
     name = name.replace(/[\x00-\x1f\x7f-\x9f\u202a-\u202e\u2066-\u2069]/g, '').slice(0, 160) || '图片';
     if (this.active >= 4) throw refused('正在上传其他图片，请稍后重试。', 429);
+    // Forget expired index entries only; files stay on disk and keep counting toward the quota.
+    for (const [key, entry] of this.entries) if (Date.now() - entry.created > ENTRY_LIFETIME_MS) this.entries.delete(key);
     if (this.used + this.reserved + budget > this.quota || this.entries.size >= 1024) throw refused('图片存储配额已满，请先清理或重启服务后重试。', 507);
     this.active++; this.reserved += budget;
     const id = randomBytes(24).toString('hex');
@@ -55,7 +59,7 @@ export class UploadStore {
       await file.close(); file = null;
       const entry = { id, name, bytes: size, type: 'image', mime, sha256: digest.digest('hex'),
         path: path.join(this.hostRoot, id + ext), diskPath: target,
-        sub: user.sub, session: `${ref.id}|${ref.generation}`, pane };
+        sub: user.sub, session: `${ref.id}|${ref.generation}`, pane, created: Date.now() };
       this.entries.set(id, entry); this.used += size; saved = true;
       return { id, name, bytes: size, type: 'image' };
     } finally {

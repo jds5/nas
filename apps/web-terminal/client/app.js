@@ -184,8 +184,10 @@ function renderSessions() {
     button.append(name, detail); button.onclick = () => connect(session); $('sessions').append(button);
   }
 }
+let refreshedAt = 0;
 async function refresh() {
-  $('refresh').disabled = true;
+  if ($('refresh').disabled) return;
+  $('refresh').disabled = true; refreshedAt = Date.now();
   try {
     ({ sessions } = await api('/terminal/manage/api/sessions')); renderSessions();
     const preferred = sessions.filter(s => s.agent === agentPreference).length;
@@ -258,6 +260,10 @@ async function connect(session, { automatic = false } = {}) {
         const next = switchQueued; switchQueued = undefined;
         if (next) connect(next);
       } else if (msg.type === 'mode') {
+        // Keep the sidebar label in step with the pane's foreground agent without polling the list.
+        const listed = sessions.find(s => key(s) === key(selected));
+        const detected = AGENT_NAMES[msg.mode] ? msg.mode : null;
+        if (listed && listed.agent !== detected) { listed.agent = detected; renderSessions(); }
         const hadFocus = document.activeElement === $('draft') || document.activeElement?.classList.contains('xterm-helper-textarea');
         setMode(msg.mode); if (hadFocus) focusInput();
       } else if (msg.type === 'conversation') {
@@ -294,6 +300,7 @@ async function connect(session, { automatic = false } = {}) {
     ws.onerror = () => { if (socket === ws) notify('无法连接，请重试或刷新页面重新登录。'); };
   } catch (e) { if (current === revision) {
     connecting = false; updateState('连接失败'); notify(e.message);
+    if (e.status === 409) void refresh();
     if (automatic && ![400, 401, 403, 409].includes(e.status) && canRecover(session, 1006, recoveryDeadline, retryAttempts)) scheduleRecovery(session, '恢复连接失败');
     else if (automatic) { cancelRecovery(); notify('自动恢复未成功，请手动重新连接；若登录已过期，请刷新页面登录。没有重发指令。'); }
   } }
@@ -317,7 +324,11 @@ function probeConnection() {
 }
 window.addEventListener('online', probeConnection);
 window.addEventListener('focus', probeConnection);
-document.addEventListener('visibilitychange', () => { if (!document.hidden) probeConnection(); });
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) return;
+  probeConnection();
+  if (Date.now() - refreshedAt > 60000) void refresh(); // Sessions may have changed while away.
+});
 function clearDraft() {
   const d = draft(); for (const item of d.files) URL.revokeObjectURL(item.preview);
   d.files = []; d.text = ''; $('draft').value = ''; renderAttachments(); notify();

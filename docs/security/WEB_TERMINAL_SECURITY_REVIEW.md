@@ -94,3 +94,7 @@ Markdown 原始 HTML 转义，图片仅文字占位；Marked 输出由 DOMPurify
 ## 0.6.0 Claude Code 识别增量复核（2026-10-13）
 
 前台命令白名单由 `codex` 扩为 `codex` / `claude`；消息框、图片提交和对话读取前后都核对同一窗格及同一前台命令，命令变化即拒绝。对话读取仍经原固定 SSH 通道调用版本化读取器（`reader-0.6.0`），不允许客户端指定路径或会话 ID；Claude Code 关联与公开消息过滤规则同[安卓安全诊断](ANDROID_APP_SECURITY_REVIEW.md)。服务端校验角色仅为 user / assistant / command，`command` 与用户消息一样以 textContent 渲染，不经过 Markdown。会话列表只新增白名单内的 `agent` 字段；“智能体”开关只写浏览器 localStorage 偏好，不影响服务端判定。未新增端口、挂载、网络、凭据或写入接口，鉴权与连接期限不变。
+
+## 0.6.2 静态资源缓存复核（2026-10-13）
+
+静态 HTML/JS/CSS 由 `no-store` 改为 `private, no-cache` + ETag：每次请求仍先验证 Access JWT（无身份时仍返回 `no-store` 的 403，携带 If-None-Match 也不会得到 304），`private` 禁止 Cloudflare 等共享缓存保存，浏览器只缓存不含凭据或会话数据的前端代码。API、票据、上传和错误响应保持 `no-store`。压缩只作用于构建产物，不处理用户数据，无 BREACH 类风险。

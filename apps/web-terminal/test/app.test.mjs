@@ -82,6 +82,27 @@ test('all paths, assets and methods require a valid signed human identity', asyn
   assert.equal((await request('/terminal/assets/app.js', { assertion })).status, 200);
   assert.equal((await request('/terminal/assets/../server/main.mjs', { assertion })).status, 404);
 });
+test('assets are compressed once, revalidated by ETag and still require identity', async () => {
+  const assertion = await token();
+  const plain = await fetch(url + '/terminal/assets/app.js', { headers: { 'cf-access-jwt-assertion': assertion, 'accept-encoding': 'identity' } });
+  const body = Buffer.from(await plain.arrayBuffer());
+  assert.equal(plain.status, 200); assert.equal(plain.headers.get('cache-control'), 'private, no-cache');
+  assert.equal(plain.headers.get('content-encoding'), null); assert.equal(Number(plain.headers.get('content-length')), body.length);
+  const etag = plain.headers.get('etag'); assert.match(etag, /^"[\w-]{22}"$/);
+  for (const coding of ['br', 'gzip']) {
+    // fetch decodes transparently; the decoded bytes must equal the original asset.
+    const compressed = await fetch(url + '/terminal/assets/app.js', { headers: { 'cf-access-jwt-assertion': assertion, 'accept-encoding': coding } });
+    assert.equal(compressed.headers.get('content-encoding'), coding);
+    assert.ok(Buffer.from(await compressed.arrayBuffer()).equals(body));
+  }
+  const cached = await fetch(url + '/terminal/assets/app.js', { headers: { 'cf-access-jwt-assertion': assertion, 'if-none-match': etag } });
+  assert.equal(cached.status, 304); assert.equal((await cached.arrayBuffer()).byteLength, 0);
+  const anonymous = await fetch(url + '/terminal/assets/app.js', { headers: { 'if-none-match': etag } });
+  assert.equal(anonymous.status, 403); assert.equal(anonymous.headers.get('cache-control'), 'no-store');
+  const sessions = await request('/terminal/manage/api/sessions', { assertion });
+  assert.equal(sessions.headers.get('cache-control'), 'no-store');
+});
+
 test('missing configuration fails closed even with otherwise valid JWT', async () => {
   const isolated = createApp({ config: null, keyResolver: keys, tmux });
   isolated.server.listen(0, '127.0.0.1'); await once(isolated.server, 'listening');

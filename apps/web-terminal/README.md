@@ -49,7 +49,7 @@
 cd /home/yao/code/nas/apps/web-terminal
 docker build --target test -t nas-web-terminal:test .
 docker run --rm --init --cap-drop ALL --security-opt no-new-privileges nas-web-terminal:test
-docker build -t nas-web-terminal:0.6.1 .
+docker build -t nas-web-terminal:0.6.2 .
 ```
 
 测试使用隔离 tmux server 和临时 RSA 测试密钥，覆盖错误/缺失 JWT、exp/nbf/iss/aud、身份、Origin/CSRF、重放、真实终端输入输出与 resize、断开与到期后会话存活。测试密钥不进入生产镜像；无环境变量免鉴权开关。
@@ -189,3 +189,13 @@ Claude Code 对话由安卓桥接同一逻辑读取：按 `~/.claude/sessions/<p
 ## 终端风格界面（0.6.1，2026-10-13）
 
 界面整体改为终端风格：系统等宽字体（CSP 只允许同源字体，不加载外部字体）、直角细线边框、荧光绿主色、琥珀色警告、青色链接；顶栏模仿 tmux 状态行，会话列表用 `❯` 标记当前会话、`●` 标记偏好智能体，底栏为 vim 风格模式块；空状态为网格背景与闪烁光标；对话阅读改为日志式（作者分隔线、用户 `❯` / 命令 `$`、Markdown 标题保留 `#` 前缀）。xterm 配色同步更新。只改样式与少量静态文字，元素 ID、按钮名称、交互和安全行为不变；遵循系统“减少动态效果”设置。回滚：`compose.yaml` 镜像改回 `nas-web-terminal:0.6.0` 后 `docker compose up -d --no-build`。
+
+## 请求效率与逻辑修正（0.6.2，2026-10-13）
+
+- **静态资源**：首次请求时读入并异步压缩（Brotli/gzip）后常驻内存，按 `Accept-Encoding` 返回，带 ETag 与 `Cache-Control: private, no-cache`；浏览器每次仍经 Access 验签后重新验证，未变化时返回无正文的 304。首次加载从约 474 KB 降至约 112 KB（Brotli），之后基本只有 304。鉴权失败、API 与错误响应仍为 `no-store`。
+- **终端输出**：窗口占满或套接字繁忙时积压的小块合并为至多 32 KiB 的帧，减少帧与 ACK 数；空闲时的回显仍立即发送，128 KiB 未确认窗口和 4 MiB 上限不变。
+- **会话列表**：由每个会话一次 `display-message` 改为单次 `list-sessions`（tmux 会转义名称中的控制字符，名称放在最后一列）。
+- **上传索引**：只保留 24 小时内（连接最长期限）的内存索引，避免累计 1024 次上传后一直拒绝；磁盘文件不删除，仍计入配额。
+- **前端**：前台智能体变化时直接更新会话栏标注；连接返回 409（会话已变化）时自动刷新列表；标签页离开超过 60 秒后返回时刷新一次列表。
+
+回滚：`compose.yaml` 镜像改回 `nas-web-terminal:0.6.1` 后 `docker compose up -d --no-build`。

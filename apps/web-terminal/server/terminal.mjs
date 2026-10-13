@@ -41,11 +41,18 @@ export function connectTerminal({ ws, ref, user, tmux, peers, uploads, conversat
   ws.on('close', code => finish('peer_closed', code));
   ws.on('error', () => finish('transport_error', 1006));
   // Bound bytes in flight; pause the PTY instead of closing a merely slow browser.
+  // A backlog (window full or socket busy) is coalesced into frames of at most 32 KiB,
+  // so bursts cost fewer frames and ACKs; idle echo is still sent immediately.
   function drainOutput() {
     if (closed || changing || ws.readyState !== WebSocket.OPEN) return;
     while (pendingOutput.length && queued + pendingOutput[0].bytes <= 128 * 1024 && ws.bufferedAmount < 128 * 1024) {
-      const chunk = pendingOutput.shift(); pendingBytes -= chunk.bytes; queued += chunk.bytes;
-      send({ type: 'output', data: chunk.data, epoch });
+      const parts = []; let bytes = 0;
+      while (pendingOutput.length && bytes + pendingOutput[0].bytes <= 32 * 1024 && queued + bytes + pendingOutput[0].bytes <= 128 * 1024) {
+        const chunk = pendingOutput.shift(); parts.push(chunk.data); bytes += chunk.bytes;
+      }
+      if (!parts.length) break;
+      pendingBytes -= bytes; queued += bytes;
+      send({ type: 'output', data: parts.join(''), epoch });
     }
     if (pendingOutput.length || queued >= 96 * 1024 || ws.bufferedAmount >= 128 * 1024) {
       if (!paused) { paused = true; term?.pause(); }

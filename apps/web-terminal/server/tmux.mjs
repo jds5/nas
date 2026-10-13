@@ -17,13 +17,14 @@ export class Tmux {
   async list() {
     const info = await stat(this.socket);
     if (!info.isSocket()) throw new Error('socket_unavailable');
-    const output = await this.command(['list-sessions', '-F', '#{session_id}\t#{session_created}\t#{pid}\t#{session_windows}\t#{session_attached}\t#{pane_current_command}']);
+    // One tmux call: names are last and tmux escapes control characters (\t, \n) in them.
+    const output = await this.command(['list-sessions', '-F', '#{session_id}\t#{session_created}\t#{pid}\t#{session_windows}\t#{session_attached}\t#{pane_current_command}\t#{session_name}']);
     const rows = output.split('\n').filter(Boolean).slice(0, 100);
     const sessions = [];
     for (const row of rows) {
-      const [id, created, pid, windows, attached, command = ''] = row.split('\t');
+      const [id, created, pid, windows, attached, command, ...rest] = row.split('\t');
+      const name = rest.join('\t');
       if (!/^\$\d+$/.test(id) || ![created, pid, windows, attached].every(x => /^\d+$/.test(x))) throw new Error('invalid_session');
-      const name = await this.command(['display-message', '-p', '-t', id, '#{session_name}']);
       // tmux changes socket permissions on attach/detach, which changes ctime.
       // Birth time + inode identify replacement without invalidating a live session.
       sessions.push({ id, generation: `${info.dev}:${info.ino}:${info.birthtimeMs}:${pid}:${created}`,

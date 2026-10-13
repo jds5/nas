@@ -45,3 +45,13 @@ test('expired identity and interrupted stream delete partial files', async t => 
   await assert.rejects(store.receive(stream, user, ref, '%1'));
   assert.deepEqual(await readdir(root), []); assert.equal(store.active, 0); assert.equal(store.reserved, 0);
 });
+
+test('expired index entries are forgotten without deleting files or freeing quota', async t => {
+  const { root, store } = await setup(t);
+  const old = await store.receive(request(), user, ref, '%1');
+  store.entries.get(old.id).created -= 25 * 60 * 60 * 1000;
+  const fresh = await store.receive(request(), user, ref, '%1');
+  assert.equal(store.entries.has(old.id), false); assert.equal(store.entries.has(fresh.id), true);
+  assert.equal((await readdir(root)).length, 2); assert.equal(store.used, png.length * 2);
+  await assert.rejects(store.message({ text: '', attachments: [old.id] }, user, ref, '%1'));
+});

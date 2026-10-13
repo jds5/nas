@@ -52,3 +52,4 @@
 
 - 网页中 Claude Code 右侧出现的 “No changes this session” 是 Claude Code 自带的 diff 侧栏：终端宽度 ≥144 列、位于 Git 仓库且未设偏好时自动打开，不是网页终端功能。在 Claude Code 输入 `/diff` 可关闭并记住偏好。
 - 网页终端 0.6.1 改为终端风格界面（详见[网页终端 README](../../apps/web-terminal/README.md)）。容器测试 31 项、Playwright 两种桌面尺寸验收通过；已部署，两个容器 healthy，源站匿名 403、公网匿名 302。回滚为改回 0.6.0 镜像。
+- 网页终端 0.6.2：静态资源压缩与 ETag 重验证、积压输出合帧、会话列表单次查询、上传索引过期清理、前端标注与列表刷新修正（详见[网页终端 README](../../apps/web-terminal/README.md)）。容器测试 34 项、读取器 6 项、Playwright 两种桌面尺寸通过；已部署，两个容器 healthy，源站匿名 403（`no-store`）、公网匿名 302，端口绑定不变。回滚为改回 0.6.1 镜像。

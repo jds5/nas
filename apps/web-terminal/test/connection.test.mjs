@@ -59,3 +59,16 @@ test('unacknowledged output remains bounded, resumes without data loss and inval
   f.frame({ type: 'ack', bytes: 9999999, epoch: 0 });
   assert.equal(f.ws.code, 1008);
 });
+
+test('backlogged small chunks are coalesced into few frames without reordering', t => {
+  const f = fixture(t);
+  f.output('w'.repeat(128 * 1024)); // Fill the unacknowledged window.
+  const window = f.ws.frames.filter(m => m.type === 'output');
+  const lines = Array.from({ length: 500 }, (_, i) => `line ${i}\r\n`);
+  for (const line of lines) f.output(line); // Arrive while blocked: queued, not sent.
+  assert.equal(f.ws.frames.filter(m => m.type === 'output').length, window.length);
+  f.frame({ type: 'ack', bytes: window.reduce((n, m) => n + Buffer.byteLength(m.data), 0), epoch: 0 });
+  const burst = f.ws.frames.filter(m => m.type === 'output').slice(window.length);
+  assert.equal(burst.map(m => m.data).join(''), lines.join(''));
+  assert.ok(burst.length <= 2, `expected coalesced frames, got ${burst.length}`);
+});
