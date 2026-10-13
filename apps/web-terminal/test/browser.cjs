@@ -34,6 +34,7 @@ async function until(check) {
       await page.goto('http://terminal-fixture:3000/terminal');
       // The preferred agent (default Claude Code) is listed first; every agent session is labelled.
       await until(async () => await page.locator('#sessions .session').count() === 4);
+      await page.screenshot({ path: `/artifacts/${label}-empty.png` });
       assert.match(await page.locator('#sessions .session').first().textContent(), /claude-chat.*Claude Code/);
       await page.locator('#agent-codex').click();
       assert.match(await page.locator('#sessions .session').first().textContent(), /codex-images.*Codex/);

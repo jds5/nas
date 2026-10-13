@@ -47,3 +47,8 @@
 - Claude Code 的会话登记、记录格式和输入框画面都是内部实现，不是公开协议。升级 Claude Code 后先运行 Python 测试，并在隔离 tmux 中做一次真实启动/发送验证。
 - 只识别原生安装的 `claude` 进程名；经 Node 启动的旧版安装不会被识别为智能体窗格。
 - Claude Code 空闲时会在输入框显示暗色的建议提示；识别逻辑将其视为空输入。电脑端若已键入正文（即使光标移到行首）仍拒绝发送。
+
+## 追加：Claude Code diff 侧栏说明与界面改版（同日）
+
+- 网页中 Claude Code 右侧出现的 “No changes this session” 是 Claude Code 自带的 diff 侧栏：终端宽度 ≥144 列、位于 Git 仓库且未设偏好时自动打开，不是网页终端功能。在 Claude Code 输入 `/diff` 可关闭并记住偏好。
+- 网页终端 0.6.1 改为终端风格界面（详见[网页终端 README](../../apps/web-terminal/README.md)）。容器测试 31 项、Playwright 两种桌面尺寸验收通过；已部署，两个容器 healthy，源站匿名 403、公网匿名 302。回滚为改回 0.6.0 镜像。

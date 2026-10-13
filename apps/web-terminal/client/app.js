@@ -12,8 +12,8 @@ function preference(name, fallback) { try { return localStorage.getItem(name) ??
 function savePreference(name, value) { try { localStorage.setItem(name, String(value)); } catch {} }
 let fontSize = Math.min(24, Math.max(12, Number(preference('terminal-font', '16')) || 16));
 const term = new Terminal({ cursorBlink: true, fontSize, scrollback: 3000,
-  fontFamily: '"SFMono-Regular", Consolas, "Liberation Mono", monospace',
-  theme: { background: '#10151b', foreground: '#d8e2ee', cursor: '#80d9c4', selectionBackground: '#385862' },
+  fontFamily: '"JetBrains Mono", "Cascadia Code", "SFMono-Regular", Consolas, "Liberation Mono", monospace',
+  theme: { background: '#07090b', foreground: '#d3ddd8', cursor: '#3ee08f', cursorAccent: '#07090b', selectionBackground: '#1f5c43' },
   linkHandler: { activate() {} }, allowProposedApi: false });
 const fit = new FitAddon(); term.loadAddon(fit);
 const encoder = new TextEncoder();

@@ -49,7 +49,7 @@
 cd /home/yao/code/nas/apps/web-terminal
 docker build --target test -t nas-web-terminal:test .
 docker run --rm --init --cap-drop ALL --security-opt no-new-privileges nas-web-terminal:test
-docker build -t nas-web-terminal:0.6.0 .
+docker build -t nas-web-terminal:0.6.1 .
 ```
 
 测试使用隔离 tmux server 和临时 RSA 测试密钥，覆盖错误/缺失 JWT、exp/nbf/iss/aud、身份、Origin/CSRF、重放、真实终端输入输出与 resize、断开与到期后会话存活。测试密钥不进入生产镜像；无环境变量免鉴权开关。
@@ -185,3 +185,7 @@ tmux 的 1006、1012、1013、4000 异常关闭可按 1/3/8 秒延迟自动恢�
 Claude Code 对话由安卓桥接同一逻辑读取：按 `~/.claude/sessions/<pid>.json` 关联进程（核对 PID 与启动时间），再读 `~/.claude/projects/*/<会话ID>.jsonl`；只展示用户/助手正文、`!` 命令和本地命令输出（作为“命令输出”纯文本），排除工具调用/结果、思考、meta 和子代理记录。读取器升级为 `~/.local/share/nas-web-terminal/reader-0.6.0/`，`reader-0.5.0` 保留用于回滚。
 
 部署：`sh deploy/setup-reader.sh`，`docker build -t nas-web-terminal:0.6.0 .`，`docker compose up -d --no-build`。回滚：将 `compose.yaml` 的两处镜像改回 `nas-web-terminal:0.5.3` 后 `docker compose up -d --no-build`（0.5.3 镜像固定读取 `reader-0.5.0`）。实施与验证见[运维记录](../../docs/operations/2026-10-13-Claude-Code接入手机与网页终端.md)。
+
+## 终端风格界面（0.6.1，2026-10-13）
+
+界面整体改为终端风格：系统等宽字体（CSP 只允许同源字体，不加载外部字体）、直角细线边框、荧光绿主色、琥珀色警告、青色链接；顶栏模仿 tmux 状态行，会话列表用 `❯` 标记当前会话、`●` 标记偏好智能体，底栏为 vim 风格模式块；空状态为网格背景与闪烁光标；对话阅读改为日志式（作者分隔线、用户 `❯` / 命令 `$`、Markdown 标题保留 `#` 前缀）。xterm 配色同步更新。只改样式与少量静态文字，元素 ID、按钮名称、交互和安全行为不变；遵循系统“减少动态效果”设置。回滚：`compose.yaml` 镜像改回 `nas-web-terminal:0.6.0` 后 `docker compose up -d --no-build`。
