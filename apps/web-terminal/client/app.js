@@ -31,6 +31,8 @@ let expires = 0, historyOpen = false, historyTimer, historyMode = 'terminal';
 let historyChoice = 'chat', historyReopen = false, historyQuiet = false, autoTimer, autoSince = 0, liveTimer;
 // Conversation view (default) puts the chat first for agent panes; 'terminal' keeps the classic layout with the side panel.
 let viewPreference = preference('view-mode', 'chat') === 'terminal' ? 'terminal' : 'chat';
+const DOCK_STATES = ['collapsed', 'compact', 'expanded'];
+let dockState = DOCK_STATES.includes(preference('terminal-dock', 'compact')) ? preference('terminal-dock', 'compact') : 'compact';
 const chat = conversationView({ send: sendFrame, connected, agentName });
 let pendingAck = 0, ackTimer, submission;
 let heartbeatTimer, retryTimer, retryAttempts = 0, recoveryDeadline = 0, lastReceived = 0, connectionId = '', uncertainSend = false;
@@ -73,7 +75,7 @@ function setMode(mode) {
 }
 const stage = document.querySelector('.stage');
 function chatFirst() { return stage.classList.contains('chat-first'); }
-// The terminal keeps its full size in both views (the strip only shows its bottom rows), so switching never resizes tmux.
+// Conversation view applies only to agent panes; the terminal dock merely crops the full-size terminal.
 function applyView() {
   const agentPane = !terminalMode && selected && selected.kind !== 'ssh';
   const want = Boolean(agentPane && viewPreference === 'chat' && connected());
@@ -81,11 +83,36 @@ function applyView() {
   $('view-chat').setAttribute('aria-pressed', String(viewPreference === 'chat'));
   $('view-terminal').setAttribute('aria-pressed', String(viewPreference === 'terminal'));
   $('open-history').hidden = want;
+  setChatFirst(want);
+}
+function setChatFirst(want) {
   if (want === chatFirst()) return;
   stage.classList.toggle('chat-first', want);
-  if (want) { stage.classList.remove('peek-expanded'); $('peek-toggle').textContent = '展开终端'; openHistory(false, 'chat'); }
+  // In the conversation view the composer lives under the chat, like a chat app; its growth never resizes tmux.
+  const hadFocus = document.activeElement === $('draft');
+  if (want) $('history').append($('composer')); else composerHome.before($('composer'));
+  if (want) $('composer').hidden = false;
+  $('toggle-composer').hidden = want;
+  $('attach').textContent = want ? '+' : '添加图片'; $('attach').setAttribute('aria-label', '添加图片');
+  $('send').textContent = want ? '↑' : '发送 ↵'; $('send').setAttribute('aria-label', '发送');
+  $('draft').placeholder = want ? `给 ${agentName()} 发消息，可粘贴或拖入图片…` : '输入消息，或粘贴、拖入图片…';
+  fitDraft();
+  if (want) openHistory(false, 'chat');
   else if (historyOpen) closeHistory(false);
+  if (hadFocus) $('draft').focus();
 }
+const composerHome = document.querySelector('.workspace footer');
+function fitDraft() {
+  const field = $('draft');
+  if (!chatFirst()) { field.style.height = ''; return; }
+  field.style.height = '0px'; // Collapse to min-height so scrollHeight measures the text, not rows=6.
+  field.style.height = `${Math.min(field.scrollHeight + 2, Math.max(120, Math.round(window.innerHeight * 0.4)))}px`;
+}
+function setDock(state) {
+  dockState = state; savePreference('terminal-dock', state);
+  for (const name of DOCK_STATES) { stage.classList.toggle(`dock-${name}`, name === state); $(`dock-${name}`).setAttribute('aria-pressed', String(name === state)); }
+}
+setDock(dockState);
 function chooseView(value) {
   viewPreference = value; savePreference('view-mode', value);
   setMode(agent || 'terminal'); focusInput();
@@ -176,10 +203,7 @@ $('history-close').onclick = () => { historyReopen = false; closeHistory(); };
 $('history').onkeydown = event => { if (event.key === 'Escape' && !chatFirst()) { event.preventDefault(); historyReopen = false; closeHistory(); } };
 $('view-chat').onclick = () => chooseView('chat');
 $('view-terminal').onclick = () => chooseView('terminal');
-$('peek-toggle').onclick = () => {
-  const expanded = stage.classList.toggle('peek-expanded');
-  $('peek-toggle').textContent = expanded ? '收起终端' : '展开终端'; term.focus();
-};
+for (const name of DOCK_STATES) $(`dock-${name}`).onclick = () => { setDock(name); if (name !== 'collapsed') term.focus(); };
 function fullTerminalHeight() { stage.style.setProperty('--term-height', `${Math.max(120, stage.clientHeight - 22)}px`); }
 function historyWidth(px) { stage.style.setProperty('--history-width', `${Math.round(Math.max(320, px))}px`); }
 if (Number(preference('history-width', '0')) > 0) historyWidth(Number(preference('history-width', '0')));
@@ -279,17 +303,17 @@ function ack(ws, forEpoch, bytes) {
 function detach({ keepRecovery = false } = {}) {
   clearInterval(heartbeatTimer); heartbeatTimer = undefined;
   if (!keepRecovery) cancelRecovery();
-  historyReopen ||= historyOpen && !chatFirst(); stage.classList.remove('chat-first'); closeHistory(false); expires = 0;
+  historyReopen ||= historyOpen && !chatFirst(); setChatFirst(false); closeHistory(false); expires = 0;
   revision++; switchQueued = undefined; connecting = ready = false; clearAck();
   const old = socket; socket = undefined; connectionId = ''; old?.close();
   if (submission) { clearTimeout(submission.timer); submission = undefined; notify('发送结果尚未确认，草稿已保留。请查看终端后决定是否重发。'); }
   updateState('已断开');
 }
 function select(session) {
-  historyReopen ||= historyOpen && !chatFirst(); stage.classList.remove('chat-first'); closeHistory(false);
+  historyReopen ||= historyOpen && !chatFirst(); setChatFirst(false); closeHistory(false);
   if (selected) draft().text = $('draft').value;
   else if ($('draft').value) draft(session).text = $('draft').value;
-  selected = session; manualComposer = false; setMode('terminal'); $('draft').value = draft().text; $('session-name').textContent = session.name;
+  selected = session; manualComposer = false; setMode('terminal'); $('draft').value = draft().text; fitDraft(); $('session-name').textContent = session.name;
   renderSessions(); renderAttachments();
 }
 async function connect(session, { automatic = false } = {}) {
@@ -358,8 +382,8 @@ async function connect(session, { automatic = false } = {}) {
         term.write(msg.data, () => ack(ws, forEpoch, encoder.encode(msg.data).length));
         if (historyOpen) {
           scheduleAuto();
-          $('chat-live').hidden = false; clearTimeout(liveTimer);
-          liveTimer = setTimeout(() => { $('chat-live').hidden = true; }, 1500);
+          stage.classList.add('live'); clearTimeout(liveTimer);
+          liveTimer = setTimeout(() => stage.classList.remove('live'), 1500);
         }
       } else if (['submitted', 'submission-error'].includes(msg.type) && msg.requestId === submission?.id) {
         clearTimeout(submission.timer); submission = undefined;
@@ -416,7 +440,7 @@ document.addEventListener('visibilitychange', () => {
 });
 function clearDraft() {
   const d = draft(); for (const item of d.files) URL.revokeObjectURL(item.preview);
-  d.files = []; d.text = ''; $('draft').value = ''; renderAttachments(); notify();
+  d.files = []; d.text = ''; $('draft').value = ''; fitDraft(); renderAttachments(); notify();
 }
 function submit() {
   const d = draft(); d.text = $('draft').value;
@@ -489,12 +513,12 @@ $('refresh').onclick = refresh;
 $('detach').onclick = () => { detach(); notify(selected?.kind === 'ssh' ? '临时 SSH 已关闭。' : '已断开，草稿保留，tmux 任务继续运行。'); };
 $('reconnect').onclick = () => selected && connect(selected);
 $('composer').onsubmit = event => { event.preventDefault(); submit(); };
-$('draft').oninput = () => { draft().text = $('draft').value; };
+$('draft').oninput = () => { draft().text = $('draft').value; fitDraft(); };
 $('draft').addEventListener('compositionstart', () => { composing = true; });
 $('draft').addEventListener('compositionend', () => { composing = false; });
 $('draft').onkeydown = event => {
   if (event.isComposing || composing || event.keyCode === 229) return;
-  if (event.ctrlKey && event.key.toLowerCase() === 'j') { event.preventDefault(); $('draft').setRangeText('\n', $('draft').selectionStart, $('draft').selectionEnd, 'end'); draft().text = $('draft').value; }
+  if (event.ctrlKey && event.key.toLowerCase() === 'j') { event.preventDefault(); $('draft').setRangeText('\n', $('draft').selectionStart, $('draft').selectionEnd, 'end'); draft().text = $('draft').value; fitDraft(); }
   else if (event.key === 'Enter') { event.preventDefault(); submit(); }
 };
 $('draft').onpaste = event => {

@@ -6,8 +6,23 @@ const markdown = new Marked({ gfm: true, breaks: false, renderer: {
   image: ({ text }) => escape(`[图片：${text || '附件'}]`),
 } });
 const tags = ['p', 'br', 'hr', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'strong', 'em', 'del', 'blockquote', 'ul', 'ol', 'li', 'pre', 'code', 'table', 'thead', 'tbody', 'tr', 'th', 'td', 'a'];
+async function copyText(text, button, label) {
+  try {
+    if (!navigator.clipboard?.writeText) throw new Error('clipboard_unavailable');
+    await navigator.clipboard.writeText(text); button.textContent = '已复制';
+  } catch {
+    // Clipboard API may be denied by browser policy; keep a user-gesture fallback.
+    const field = document.createElement('textarea'); field.value = text;
+    field.style.position = 'fixed'; field.style.opacity = '0'; field.readOnly = true;
+    document.body.append(field); field.select();
+    try { button.textContent = document.execCommand('copy') ? '已复制' : '请选中文字复制'; }
+    catch { button.textContent = '请选中文字复制'; }
+    finally { field.remove(); button.focus(); }
+  }
+  setTimeout(() => { button.textContent = label; }, 2000);
+}
 export function messageElement(message, agentName = 'Codex') {
-  const article = document.createElement('article'); article.className = `chat-message ${message.role}`;
+  const article = document.createElement('article'); article.className = `chat-message ${message.role}${message.phase === 'commentary' ? ' commentary' : ''}`;
   const heading = document.createElement('div'); heading.className = 'chat-author';
   heading.textContent = message.role === 'user' ? '你' : message.role === 'command' ? '命令输出' : message.phase === 'commentary' ? `${agentName} · 进度` : agentName; article.append(heading);
   const body = document.createElement('div'); body.className = 'chat-body'; article.append(body);
@@ -32,24 +47,14 @@ export function messageElement(message, agentName = 'Codex') {
       for (const code of body.querySelectorAll('pre')) {
         const wrap = document.createElement('div'); wrap.className = 'chat-code'; code.replaceWith(wrap); wrap.append(code);
         const copy = document.createElement('button'); copy.type = 'button'; copy.className = 'copy-code'; copy.textContent = '复制代码';
-        copy.onclick = async () => {
-          try {
-            if (!navigator.clipboard?.writeText) throw new Error('clipboard_unavailable');
-            await navigator.clipboard.writeText(code.textContent); copy.textContent = '已复制';
-          } catch {
-            // Clipboard API may be denied by browser policy; keep a user-gesture fallback.
-            const field = document.createElement('textarea'); field.value = code.textContent;
-            field.style.position = 'fixed'; field.style.opacity = '0'; field.readOnly = true;
-            document.body.append(field); field.select();
-            try { copy.textContent = document.execCommand('copy') ? '已复制' : '请选中文字复制'; }
-            catch { copy.textContent = '请选中文字复制'; }
-            finally { field.remove(); copy.focus(); }
-          }
-          setTimeout(() => { copy.textContent = '复制代码'; }, 2000);
-        }; wrap.prepend(copy);
+        copy.onclick = () => copyText(code.textContent, copy, '复制代码'); wrap.prepend(copy);
       }
     } catch { body.textContent = message.text; }
   }
+  // Like chat apps: a quiet copy action under each reply (raw Markdown / original text).
+  const actions = document.createElement('div'); actions.className = 'chat-actions';
+  const copy = document.createElement('button'); copy.type = 'button'; copy.className = 'copy-message'; copy.textContent = '复制';
+  copy.onclick = () => copyText(message.text, copy, '复制'); actions.append(copy); article.append(actions);
   return article;
 }
 

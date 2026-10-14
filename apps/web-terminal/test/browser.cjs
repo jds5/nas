@@ -101,6 +101,8 @@ async function until(check) {
       assert.equal(await page.locator('.copy-code').count(), 1);
       await page.locator('.copy-code').click();
       await until(async () => await page.locator('.copy-code').textContent() === '已复制');
+      await page.locator('.chat-message.assistant .copy-message').click();
+      await until(async () => await page.locator('.chat-message.assistant .copy-message').textContent() === '已复制');
       assert.equal(await page.locator('#chat-messages img, #chat-messages script, #chat-messages iframe').count(), 0);
       assert.equal(await page.locator('#chat-messages a').count(), 1);
       assert.equal(await page.locator('#chat-messages a').getAttribute('rel'), 'noopener noreferrer');
@@ -115,9 +117,17 @@ async function until(check) {
       assert.equal(inputCount, codexInputBeforeWheel, 'Codex wheel must not recall previous prompts');
       // Expanding or collapsing the strip must not resize the shared tmux window.
       const resizesBefore = resizeFrames;
-      await page.locator('#peek-toggle').click(); await page.waitForTimeout(300);
+      await page.locator('#dock-expanded').click(); await page.waitForTimeout(300);
       assert.ok((await page.locator('#terminal-wrap').boundingBox()).height > stripBox.height + 100);
-      await page.locator('#peek-toggle').click(); await page.waitForTimeout(300);
+      await page.locator('#dock-collapsed').click(); await page.waitForTimeout(300);
+      assert.ok((await page.locator('#terminal-wrap').boundingBox()).height < 2, 'collapsed dock hides the terminal');
+      await page.locator('#dock-compact').click(); await page.waitForTimeout(300);
+      // Composer sits under the chat, grows with text, and typing never resizes tmux.
+      assert.ok((await page.locator('#composer').boundingBox()).y < stripBox.y, 'composer is inside the conversation');
+      const draftHeight = (await page.locator('#draft').boundingBox()).height;
+      await page.locator('#draft').fill('一\n二\n三\n四'); await page.locator('#draft').dispatchEvent('input');
+      assert.ok((await page.locator('#draft').boundingBox()).height > draftHeight + 40, 'composer grows with its text');
+      await page.locator('#draft').fill(''); await page.locator('#draft').dispatchEvent('input'); await page.waitForTimeout(200);
       assert.equal(resizeFrames, resizesBefore, 'expanding the terminal strip must not resize tmux');
       await page.locator('#view-terminal').click();
       await until(async () => await page.locator('.stage.chat-first').count() === 0 && await page.locator('#history').isHidden());
