@@ -90,10 +90,10 @@ async function until(check) {
       const chatBox = await page.locator('#history').boundingBox(), stripBox = await page.locator('#terminal-wrap').boundingBox();
       assert.ok(stripBox.y >= chatBox.y + chatBox.height && stripBox.height < chatBox.height, 'terminal strip sits below the chat');
       assert.equal(await page.locator('.history-heading').isVisible(), false, 'only one chat/terminal switch is shown');
-      // The small dock shows just the terminal's last 7 rows (Claude Code's status line down to the tmux status bar).
+      // The small dock shows just the terminal's last 8 rows (Claude Code's status line and tip down to the tmux status bar).
       const screenRows = await page.locator('.xterm-rows > div').count();
       const cell = await page.locator('.xterm-screen').evaluate(el => el.clientHeight) / screenRows;
-      assert.ok(Math.abs(stripBox.height - (cell * 7 + 14)) <= 2, `small dock is 7 rows high (${stripBox.height} vs ${cell * 7 + 14})`);
+      assert.ok(Math.abs(stripBox.height - (cell * 8 + 14)) <= 2, `small dock is 8 rows high (${stripBox.height} vs ${cell * 8 + 14})`);
       await page.locator('#terminal-wrap').hover(); await page.mouse.wheel(0, -300);
       assert.equal(await page.locator('#chat-messages h1').textContent(), 'Markdown 对话');
       assert.equal(await page.locator('#chat-messages strong').textContent(), '粗体');

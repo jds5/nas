@@ -49,7 +49,7 @@
 cd /home/yao/code/nas/apps/web-terminal
 docker build --target test -t nas-web-terminal:test .
 docker run --rm --init --cap-drop ALL --security-opt no-new-privileges nas-web-terminal:test
-docker build -t nas-web-terminal:0.6.8 .
+docker build -t nas-web-terminal:0.6.9 .
 ```
 
 测试使用隔离 tmux server 和临时 RSA 测试密钥，覆盖错误/缺失 JWT、exp/nbf/iss/aud、身份、Origin/CSRF、重放、真实终端输入输出与 resize、断开与到期后会话存活。测试密钥不进入生产镜像；无环境变量免鉴权开关。
@@ -253,3 +253,7 @@ Claude Code 对话由安卓桥接同一逻辑读取：按 `~/.claude/sessions/<p
 - 保留 0.6.7 的“只有一个切换”：对话模式不显示“对话 / 终端历史”标签，终端历史在终端模式的右侧面板里查看。也保留 0.6.7 的状态文字修正。
 
 只改前端。回滚：镜像改回 `nas-web-terminal:0.6.7`（弹出式终端）或 `0.6.6`。
+
+## 小窗加高一行（0.6.9，2026-10-14）
+
+用户反馈：Claude Code 有时会在运行状态行下方加一行提示（Tip），状态行被顶出 7 行小窗。小窗改为露出终端底部 8 行，比 0.6.8 高一行，其余不变。提示超过一行或输入框里有多行草稿时，状态行仍可能被挤出，需要时点“展开”。回滚：镜像改回 `nas-web-terminal:0.6.8`。

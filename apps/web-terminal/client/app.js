@@ -205,9 +205,9 @@ $('view-chat').onclick = () => chooseView('chat');
 $('view-terminal').onclick = () => chooseView('terminal');
 for (const name of DOCK_STATES) $(`dock-${name}`).onclick = () => { setDock(name); if (name !== 'collapsed') term.focus(); };
 function fullTerminalHeight() { stage.style.setProperty('--term-height', `${Math.max(120, stage.clientHeight - 22)}px`); }
-// The small dock shows the terminal's last 7 rows: Claude Code's status line (✻ … esc to interrupt), the blank line,
-// its framed input box, the mode line, and the tmux status bar.
-const DOCK_ROWS = 7;
+// The small dock shows the terminal's last 8 rows: Claude Code's status line (✻ … esc to interrupt), the tip line it
+// sometimes adds under it (or a blank), its framed input box, the mode line, and the tmux status bar.
+const DOCK_ROWS = 8;
 function dockHeight() {
   const screen = $('terminal').querySelector('.xterm-screen');
   if (!opened || !screen || !term.rows) return;
