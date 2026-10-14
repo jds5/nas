@@ -55,7 +55,7 @@ export function messageElement(message, agentName = 'Codex') {
 
 export function conversationView({ send, connected, agentName = () => 'Codex' }) {
   const $ = id => document.getElementById(id);
-  let active = false, pending, timer, binding, page, cursor = null, stack = [], serial = 0, shown = '';
+  let active = false, pending, timer, binding, page, cursor = null, stack = [], serial = 0, shown = '', follow = false;
   function busy(value) { for (const id of ['chat-older', 'chat-newer', 'chat-refresh']) $(id).disabled = value; }
   // quiet: background follow of the newest page; keeps scroll position and status unless something changed.
   function request(before = null, movement = 'refresh', quiet = false) {
@@ -75,6 +75,7 @@ export function conversationView({ send, connected, agentName = () => 'Codex' })
   $('chat-newer').onclick = () => stack.length && request(stack.at(-1), 'newer');
   return {
     open() { reset(); active = true; request(); }, close: reset,
+    followLatest() { follow = true; }, // After sending, jump to the reply even if the reader had scrolled up.
     refresh() {
       const selection = getSelection();
       if (!active || pending || stack.length || cursor !== null) return; // Only follow the newest page.
@@ -98,7 +99,8 @@ export function conversationView({ send, connected, agentName = () => 'Codex' })
       $('chat-messages').replaceChildren(fragment);
       $('chat-older').hidden = !result.hasOlder; $('chat-newer').hidden = !stack.length;
       $('chat-status').textContent = (result.skipped ? '部分超大记录未显示；' : '') + (result.messages.length ? `${result.messages.length} 条消息 · ${stack.length ? '较早的一页' : '自动跟随最新回复'}` : result.hasOlder ? '此段没有可展示的消息，请继续加载更早消息。' : '暂无已完成的消息；可在终端处理启动菜单或发送首条消息。');
-      viewport.scrollTop = action.quiet ? (atBottom ? viewport.scrollHeight : top) : action.movement === 'refresh' ? viewport.scrollHeight : 0;
+      const stick = atBottom || follow; follow = false;
+      viewport.scrollTop = action.quiet ? (stick ? viewport.scrollHeight : top) : action.movement === 'refresh' ? viewport.scrollHeight : 0;
     },
   };
 }

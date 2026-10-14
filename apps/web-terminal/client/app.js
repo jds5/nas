@@ -28,7 +28,9 @@ let agentPreference = AGENT_NAMES[preference('agent-preference', 'claude')] ? pr
 const agentName = () => AGENT_NAMES[agent] || AGENT_NAMES[agentPreference];
 let expires = 0, historyOpen = false, historyTimer, historyMode = 'terminal';
 // historyChoice remembers the tab the user picked; historyReopen restores the panel after a switch or reconnect.
-let historyChoice = 'chat', historyReopen = false, historyQuiet = false, autoTimer, autoSince = 0;
+let historyChoice = 'chat', historyReopen = false, historyQuiet = false, autoTimer, autoSince = 0, liveTimer;
+// Conversation view (default) puts the chat first for agent panes; 'terminal' keeps the classic layout with the side panel.
+let viewPreference = preference('view-mode', 'chat') === 'terminal' ? 'terminal' : 'chat';
 const chat = conversationView({ send: sendFrame, connected, agentName });
 let pendingAck = 0, ackTimer, submission;
 let heartbeatTimer, retryTimer, retryAttempts = 0, recoveryDeadline = 0, lastReceived = 0, connectionId = '', uncertainSend = false;
@@ -61,13 +63,32 @@ function setMode(mode) {
   $('composer').hidden = terminalMode && !manualComposer;
   $('attach').hidden = terminalMode;
   $('toggle-composer').textContent = $('composer').hidden ? '展开输入框' : '收起输入框';
-  $('hint').textContent = selected?.kind === 'ssh' ? '临时 SSH：断开、切换或连接到期会关闭登录 shell；重新连接会新建。' : terminalMode ? '直接在终端输入；上滚在右侧打开历史面板，终端照常可用。' : `点击终端操作 ${agentName()} 菜单；上滚在右侧阅读对话，终端照常可用。`;
-  if (historyOpen) {
+  $('hint').textContent = selected?.kind === 'ssh' ? '临时 SSH：断开、切换或连接到期会关闭登录 shell；重新连接会新建。' : terminalMode ? '直接在终端输入；上滚在右侧打开历史面板，终端照常可用。' : viewPreference === 'chat' ? `对话模式：上方自动跟随 ${agentName()} 对话，下方实时终端可点击处理菜单；右上角可切回终端模式。` : `点击终端操作 ${agentName()} 菜单；上滚在右侧阅读对话，终端照常可用。`;
+  if (historyOpen && !chatFirst()) {
     $('history-chat').hidden = terminalMode;
     const wanted = terminalMode || historyChoice === 'terminal' ? 'terminal' : 'chat';
     if (wanted !== historyMode) historyTab(wanted, { focus: false });
   }
-  resize();
+  applyView(); resize();
+}
+const stage = document.querySelector('.stage');
+function chatFirst() { return stage.classList.contains('chat-first'); }
+// The terminal keeps its full size in both views (the strip only shows its bottom rows), so switching never resizes tmux.
+function applyView() {
+  const agentPane = !terminalMode && selected && selected.kind !== 'ssh';
+  const want = Boolean(agentPane && viewPreference === 'chat' && connected());
+  $('view-switch').hidden = !agentPane;
+  $('view-chat').setAttribute('aria-pressed', String(viewPreference === 'chat'));
+  $('view-terminal').setAttribute('aria-pressed', String(viewPreference === 'terminal'));
+  $('open-history').hidden = want;
+  if (want === chatFirst()) return;
+  stage.classList.toggle('chat-first', want);
+  if (want) { stage.classList.remove('peek-expanded'); $('peek-toggle').textContent = '展开终端'; openHistory(false, 'chat'); }
+  else if (historyOpen) closeHistory(false);
+}
+function chooseView(value) {
+  viewPreference = value; savePreference('view-mode', value);
+  setMode(agent || 'terminal'); focusInput();
 }
 function sendFrame(frame) { if (socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ ...frame, epoch })); }
 function size() {
@@ -121,12 +142,12 @@ function historyTab(mode, { focus = true } = {}) {
   else { readTerminalHistory(false); if (focus) $('history-content').focus(); }
 }
 // The panel sits beside the live terminal, so opening it never blocks input or steals focus from wheel use.
-function openHistory(focus = true) {
+function openHistory(focus = true, tab) {
   if (!connected() || selected?.kind === 'ssh') return;
   historyOpen = true; $('history').hidden = $('history-resizer').hidden = false;
   $('open-history').setAttribute('aria-pressed', 'true');
   $('history-chat').hidden = terminalMode;
-  historyTab(terminalMode || historyChoice === 'terminal' ? 'terminal' : 'chat', { focus });
+  historyTab(tab || (terminalMode || historyChoice === 'terminal' ? 'terminal' : 'chat'), { focus });
 }
 function clearAuto() { clearTimeout(autoTimer); autoTimer = undefined; autoSince = 0; }
 // Follow new output: refresh once it settles, and at most every 10 s while it keeps streaming.
@@ -152,8 +173,14 @@ $('history-content').addEventListener('wheel', event => {
   if (event.shiftKey && event.deltaY && !event.deltaX) { event.preventDefault(); $('history-content').scrollLeft += event.deltaY; }
 }, { passive: false });
 $('history-close').onclick = () => { historyReopen = false; closeHistory(); };
-$('history').onkeydown = event => { if (event.key === 'Escape') { event.preventDefault(); historyReopen = false; closeHistory(); } };
-const stage = document.querySelector('.stage');
+$('history').onkeydown = event => { if (event.key === 'Escape' && !chatFirst()) { event.preventDefault(); historyReopen = false; closeHistory(); } };
+$('view-chat').onclick = () => chooseView('chat');
+$('view-terminal').onclick = () => chooseView('terminal');
+$('peek-toggle').onclick = () => {
+  const expanded = stage.classList.toggle('peek-expanded');
+  $('peek-toggle').textContent = expanded ? '收起终端' : '展开终端'; term.focus();
+};
+function fullTerminalHeight() { stage.style.setProperty('--term-height', `${Math.max(120, stage.clientHeight - 22)}px`); }
 function historyWidth(px) { stage.style.setProperty('--history-width', `${Math.round(Math.max(320, px))}px`); }
 if (Number(preference('history-width', '0')) > 0) historyWidth(Number(preference('history-width', '0')));
 $('history-resizer').onpointerdown = event => {
@@ -252,14 +279,14 @@ function ack(ws, forEpoch, bytes) {
 function detach({ keepRecovery = false } = {}) {
   clearInterval(heartbeatTimer); heartbeatTimer = undefined;
   if (!keepRecovery) cancelRecovery();
-  historyReopen ||= historyOpen; closeHistory(false); expires = 0;
+  historyReopen ||= historyOpen && !chatFirst(); stage.classList.remove('chat-first'); closeHistory(false); expires = 0;
   revision++; switchQueued = undefined; connecting = ready = false; clearAck();
   const old = socket; socket = undefined; connectionId = ''; old?.close();
   if (submission) { clearTimeout(submission.timer); submission = undefined; notify('发送结果尚未确认，草稿已保留。请查看终端后决定是否重发。'); }
   updateState('已断开');
 }
 function select(session) {
-  historyReopen ||= historyOpen; closeHistory(false);
+  historyReopen ||= historyOpen && !chatFirst(); stage.classList.remove('chat-first'); closeHistory(false);
   if (selected) draft().text = $('draft').value;
   else if ($('draft').value) draft(session).text = $('draft').value;
   selected = session; manualComposer = false; setMode('terminal'); $('draft').value = draft().text; $('session-name').textContent = session.name;
@@ -304,7 +331,7 @@ async function connect(session, { automatic = false } = {}) {
       if (msg.type === 'ready') {
         expires = msg.expires; connectionId = msg.connectionId || ''; ready = true; connecting = false; updateState('已连接'); focusInput(); resize();
         if (historyReopen && selected?.kind !== 'ssh') openHistory(false);
-        historyReopen = false;
+        historyReopen = false; applyView();
         if (automatic) notify(uncertainSend ? '已恢复原 tmux 会话；上次图片消息结果未确认，请先核对，未自动重发。' : '已恢复原 tmux 会话，没有重发指令。');
         const next = switchQueued; switchQueued = undefined;
         if (next) connect(next);
@@ -329,7 +356,11 @@ async function connect(session, { automatic = false } = {}) {
       } else if (msg.type === 'output') {
         const forEpoch = epoch;
         term.write(msg.data, () => ack(ws, forEpoch, encoder.encode(msg.data).length));
-        if (historyOpen) scheduleAuto();
+        if (historyOpen) {
+          scheduleAuto();
+          $('chat-live').hidden = false; clearTimeout(liveTimer);
+          liveTimer = setTimeout(() => { $('chat-live').hidden = true; }, 1500);
+        }
       } else if (['submitted', 'submission-error'].includes(msg.type) && msg.requestId === submission?.id) {
         clearTimeout(submission.timer); submission = undefined;
         if (msg.type === 'submitted') clearDraft(); else notify(msg.error);
@@ -389,6 +420,7 @@ function clearDraft() {
 }
 function submit() {
   const d = draft(); d.text = $('draft').value;
+  if (historyOpen && historyMode === 'chat') chat.followLatest();
   if (!connected() || submission || d.files.some(x => !x.uploaded || x.uploading)) return;
   if (!d.text.trim() && !d.files.length) return;
   if (encoder.encode(d.text).length > 15000) { notify('单条文字不能超过 15 KB。'); return; }
@@ -479,5 +511,6 @@ $('fullscreen').onclick = async () => {
   catch { notify('当前浏览器不支持全屏。'); }
 };
 new ResizeObserver(resize).observe($('terminal-wrap'));
+new ResizeObserver(() => { fullTerminalHeight(); resize(); }).observe(stage);
 window.addEventListener('pagehide', detach);
 chooseAgent(agentPreference); setMode('terminal'); updateState('尚未连接'); refresh();

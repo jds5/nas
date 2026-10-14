@@ -20,12 +20,12 @@ async function until(check) {
         };
       });
       const errors = []; page.on('pageerror', e => { errors.push(e.message); console.error('Page error:', e.message); });
-      let output = '', wsCount = 0, ticketRequests = 0, inputCount = 0, latestDeadline, heartbeatReplies = 0; const inputs = [];
+      let output = '', resizeFrames = 0, wsCount = 0, ticketRequests = 0, inputCount = 0, latestDeadline, heartbeatReplies = 0; const inputs = [];
       page.on('request', req => { if (req.url().endsWith('/api/connections')) ticketRequests++; });
       page.on('websocket', ws => {
         wsCount++;
         ws.on('framereceived', ({ payload }) => { const m = JSON.parse(payload); if (m.type === 'output') output += m.data; if (m.type === 'ready') latestDeadline = m.expires; if (m.type === 'heartbeat-ack') heartbeatReplies++; });
-        ws.on('framesent', ({ payload }) => { const m = JSON.parse(payload); if (m.type === 'input') { inputCount++; inputs.push(m.data); } });
+        ws.on('framesent', ({ payload }) => { const m = JSON.parse(payload); if (m.type === 'input') { inputCount++; inputs.push(m.data); } if (m.type === 'resize') resizeFrames++; });
       });
       const choose = async name => {
         await page.getByRole('button', { name: new RegExp(name) }).click();
@@ -81,8 +81,14 @@ async function until(check) {
       await until(() => output.includes('网页上传的附件') && output.includes('.png'));
       await new Promise(r => setTimeout(r, 200));
       const codexInputBeforeWheel = inputCount;
-      await page.locator('#terminal').hover(); await page.mouse.wheel(0, -300);
-      await until(async () => await page.locator('#chat-messages h1').count() === 1);
+      // Agent panes open in the conversation view by default: chat on top, live terminal strip below.
+      await until(async () => await page.locator('.stage.chat-first').count() === 1 && await page.locator('#chat-messages h1').count() === 1);
+      assert.equal(await page.locator('#view-switch').isVisible(), true);
+      assert.equal(await page.locator('#history-close').isVisible(), false);
+      assert.equal(await page.locator('#open-history').isVisible(), false);
+      const chatBox = await page.locator('#history').boundingBox(), stripBox = await page.locator('#terminal-wrap').boundingBox();
+      assert.ok(stripBox.y >= chatBox.y + chatBox.height && stripBox.height < chatBox.height, 'terminal strip sits below the chat');
+      await page.locator('#terminal-wrap').hover(); await page.mouse.wheel(0, -300);
       assert.equal(await page.locator('#chat-messages h1').textContent(), 'Markdown 对话');
       assert.equal(await page.locator('#chat-messages strong').textContent(), '粗体');
       assert.equal(await page.locator('#chat-messages table td').count(), 14);
@@ -107,7 +113,19 @@ async function until(check) {
       await page.locator('#history-terminal').click();
       await until(async () => (await page.locator('#history-content').textContent()).includes('网页上传的附件'));
       assert.equal(inputCount, codexInputBeforeWheel, 'Codex wheel must not recall previous prompts');
-      await page.locator('#history-close').click();
+      // Expanding or collapsing the strip must not resize the shared tmux window.
+      const resizesBefore = resizeFrames;
+      await page.locator('#peek-toggle').click(); await page.waitForTimeout(300);
+      assert.ok((await page.locator('#terminal-wrap').boundingBox()).height > stripBox.height + 100);
+      await page.locator('#peek-toggle').click(); await page.waitForTimeout(300);
+      assert.equal(resizeFrames, resizesBefore, 'expanding the terminal strip must not resize tmux');
+      await page.locator('#view-terminal').click();
+      await until(async () => await page.locator('.stage.chat-first').count() === 0 && await page.locator('#history').isHidden());
+      assert.equal(await page.locator('#open-history').isVisible(), true);
+      await page.locator('#view-chat').click();
+      await until(async () => await page.locator('.stage.chat-first').count() === 1 && await page.locator('#chat-messages h1').count() === 1);
+      await page.locator('#view-terminal').click();
+      await until(async () => await page.locator('#history').isHidden());
       for (const method of ['paste', 'drop']) {
         await page.evaluate(({ bytes, method }) => {
           const dt = new DataTransfer(); dt.items.add(new File([new Uint8Array(bytes)], method + '.png', { type: 'image/png' }));
@@ -118,6 +136,9 @@ async function until(check) {
         await page.getByRole('button', { name: '移除', exact: true }).click();
       }
       await choose('claude-chat'); await until(async () => await page.locator('#composer').isVisible() && await page.locator('#attach').isVisible());
+      assert.equal(await page.locator('.stage.chat-first').count(), 0, 'terminal view preference is remembered');
+      await page.locator('#view-chat').click(); await until(async () => await page.locator('.stage.chat-first').count() === 1 && await page.locator('#chat-messages h1').count() === 1);
+      await page.waitForTimeout(400); await page.screenshot({ path: `/artifacts/${label}-conversation-view.png` });
       assert.equal(await page.locator('#history-chat').textContent(), 'Claude Code 对话');
       await choose('demo-project'); await page.locator('#toggle-composer').click(); await page.locator('#draft').fill("seq 1 60000; printf 'FLOW_%s_OK\\n' 'END'");
       await page.locator('#draft').press('Enter');

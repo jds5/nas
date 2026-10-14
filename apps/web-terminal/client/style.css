@@ -358,6 +358,35 @@ footer a { margin-left: auto; white-space: nowrap; }
   border: 1px solid var(--outline-variant); border-radius: 12px; background: var(--bg);
 }
 #history:focus-within { outline: 2px solid var(--primary); outline-offset: -2px; }
+#peek-toggle { display: none; }
+
+/* Conversation view: chat fills the stage, the live terminal shows as a strip of its bottom rows.
+   #terminal keeps the full stage height (--term-height), so tmux is never resized by this layout. */
+.stage.chat-first { flex-direction: column; gap: 12px; }
+.stage.chat-first #history { order: 0; flex: 1 1 auto; width: auto; min-height: 120px; }
+.stage.chat-first #history-resizer, .stage.chat-first #history-close { display: none; }
+.stage.chat-first #terminal-wrap { order: 1; flex: 0 0 clamp(150px, 28%, 260px); transition: flex-basis 0.2s; }
+.stage.chat-first.peek-expanded #terminal-wrap { flex-basis: 64%; }
+.stage.chat-first #terminal { top: auto; height: var(--term-height, 100%); }
+.stage.chat-first #peek-toggle {
+  display: block; position: absolute; top: 8px; right: 10px; z-index: 2;
+  font-size: 12px; padding: 4px 12px; min-height: 28px;
+  background: rgb(53 75 64 / 0.92); color: #cfe9d9;
+}
+.stage.chat-first #peek-toggle:hover { background: #354b40; }
+/* Give the conversation the room: one-line header, compact composer (still drag-resizable). */
+.stage.chat-first .history-tip { display: none; }
+.stage.chat-first .history-heading { padding: 8px 14px; }
+.workspace:has(.stage.chat-first) .input-label { display: none; }
+.workspace:has(.stage.chat-first) textarea { min-height: 64px; height: 96px; }
+.segmented { display: inline-flex; border: 1px solid var(--outline); border-radius: 20px; overflow: hidden; margin-right: 6px; }
+.segmented button { border-radius: 0; background: transparent; color: var(--on-surface); }
+.segmented button + button { border-left: 1px solid var(--outline); }
+.segmented button:hover { box-shadow: none; background: color-mix(in srgb, var(--on-surface) 8%, transparent); }
+.segmented button[aria-pressed="true"] { background: var(--secondary-container); color: var(--on-secondary-container); }
+#chat-live { font-size: 12px; color: var(--primary); font-weight: 500; }
+#chat-live::before { content: ""; display: inline-block; width: 6px; height: 6px; margin-right: 6px; border-radius: 50%; background: currentColor; vertical-align: middle; animation: live-pulse 1s ease-in-out infinite alternate; }
+@keyframes live-pulse { from { opacity: 0.3; } to { opacity: 1; } }
 .history-heading {
   display: flex;
   flex-wrap: wrap;
@@ -427,4 +456,4 @@ footer a { margin-left: auto; white-space: nowrap; }
   position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
   overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
 }
-@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
