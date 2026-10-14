@@ -55,17 +55,18 @@ export function messageElement(message, agentName = 'Codex') {
 
 export function conversationView({ send, connected, agentName = () => 'Codex' }) {
   const $ = id => document.getElementById(id);
-  let active = false, pending, timer, binding, page, cursor = null, stack = [], serial = 0;
+  let active = false, pending, timer, binding, page, cursor = null, stack = [], serial = 0, shown = '';
   function busy(value) { for (const id of ['chat-older', 'chat-newer', 'chat-refresh']) $(id).disabled = value; }
-  function request(before = null, movement = 'refresh') {
+  // quiet: background follow of the newest page; keeps scroll position and status unless something changed.
+  function request(before = null, movement = 'refresh', quiet = false) {
     if (!active || !connected() || pending) return;
-    const requestId = `conversation-${++serial}`; pending = { requestId, before, movement }; busy(true);
-    $('chat-status').textContent = `正在读取 ${agentName()} 原始消息…`;
+    const requestId = `conversation-${++serial}`; pending = { requestId, before, movement, quiet };
+    if (!quiet) { busy(true); $('chat-status').textContent = `正在读取 ${agentName()} 原始消息…`; }
     send({ type: 'conversation', requestId, ...(movement !== 'refresh' ? { before, binding } : {}) });
-    timer = setTimeout(() => { if (pending?.requestId === requestId) { pending = undefined; busy(false); $('chat-status').textContent = '读取超时，可刷新重试或切换到终端历史。'; } }, 25000);
+    timer = setTimeout(() => { if (pending?.requestId === requestId) { pending = undefined; busy(false); if (!quiet) $('chat-status').textContent = '读取超时，可刷新重试或切换到终端历史。'; } }, 25000);
   }
   function reset() {
-    active = false; clearTimeout(timer); pending = undefined; binding = page = undefined; cursor = null; stack = [];
+    active = false; clearTimeout(timer); pending = undefined; binding = page = undefined; cursor = null; stack = []; shown = '';
     $('chat-messages').replaceChildren(); $('chat-status').textContent = ''; busy(false);
     $('chat-older').hidden = $('chat-newer').hidden = true;
   }
@@ -74,10 +75,20 @@ export function conversationView({ send, connected, agentName = () => 'Codex' })
   $('chat-newer').onclick = () => stack.length && request(stack.at(-1), 'newer');
   return {
     open() { reset(); active = true; request(); }, close: reset,
+    refresh() {
+      const selection = getSelection();
+      if (!active || pending || stack.length || cursor !== null) return; // Only follow the newest page.
+      if (selection && !selection.isCollapsed && $('chat-messages').contains(selection.anchorNode)) return;
+      request(null, 'refresh', true);
+    },
     receive(result) {
       if (!active || !pending || result.requestId !== pending.requestId) return;
       clearTimeout(timer); const action = pending; pending = undefined; busy(false);
-      if (!result.ok) { $('chat-status').textContent = result.error || '读取失败，可刷新重试或切换到终端历史。'; return; }
+      if (!result.ok) { if (!action.quiet) $('chat-status').textContent = result.error || '读取失败，可刷新重试或切换到终端历史。'; return; }
+      const signature = `${result.binding}|${result.before}|${result.messages.map(m => `${m.id}:${m.text.length}`).join(',')}`;
+      if (action.quiet && signature === shown) return;
+      const viewport = $('conversation-content'), atBottom = viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight < 80, top = viewport.scrollTop;
+      shown = signature;
       if (action.movement === 'older') stack.push(cursor);
       else if (action.movement === 'newer') stack.pop();
       else stack = [];
@@ -86,8 +97,8 @@ export function conversationView({ send, connected, agentName = () => 'Codex' })
       for (const message of result.messages) fragment.append(messageElement(message, agentName()));
       $('chat-messages').replaceChildren(fragment);
       $('chat-older').hidden = !result.hasOlder; $('chat-newer').hidden = !stack.length;
-      $('chat-status').textContent = (result.skipped ? '部分超大记录未显示；' : '') + (result.messages.length ? `${result.messages.length} 条消息 · 表格可横向滚动 · 刷新查看最新回复` : result.hasOlder ? '此段没有可展示的消息，请继续加载更早消息。' : '暂无已完成的消息；可返回终端处理启动菜单或发送首条消息。');
-      const viewport = $('conversation-content'); viewport.scrollTop = action.movement === 'refresh' ? viewport.scrollHeight : 0;
+      $('chat-status').textContent = (result.skipped ? '部分超大记录未显示；' : '') + (result.messages.length ? `${result.messages.length} 条消息 · ${stack.length ? '较早的一页' : '自动跟随最新回复'}` : result.hasOlder ? '此段没有可展示的消息，请继续加载更早消息。' : '暂无已完成的消息；可在终端处理启动菜单或发送首条消息。');
+      viewport.scrollTop = action.quiet ? (atBottom ? viewport.scrollHeight : top) : action.movement === 'refresh' ? viewport.scrollHeight : 0;
     },
   };
 }

@@ -231,11 +231,13 @@ h1 { font-size: 16px; font-weight: 600; margin: 0; }
 #detach:not(:disabled) { background: transparent; color: var(--error); box-shadow: inset 0 0 0 1px var(--outline-variant); }
 #detach:not(:disabled):hover { background: var(--error-container); color: var(--on-error-container); }
 
+/* Terminal and history panel side by side; the terminal stays live while reading. */
+.stage { flex: 1; min-height: 0; display: flex; margin: 0 12px; }
 #terminal-wrap {
   min-height: 0;
+  min-width: 0;
   flex: 1;
   position: relative;
-  margin: 0 12px;
   border-radius: 12px;
   background: var(--term-bg);
   overflow: hidden;
@@ -343,7 +345,19 @@ footer {
 footer a { margin-left: auto; white-space: nowrap; }
 
 /* ── history & conversation ── */
-#history { position: absolute; inset: 0; z-index: 5; display: flex; flex-direction: column; background: var(--bg); }
+#history-resizer { flex: 0 0 12px; position: relative; cursor: col-resize; touch-action: none; }
+#history-resizer::after {
+  content: ""; position: absolute; top: 50%; left: 4px; width: 4px; height: 48px; margin-top: -24px;
+  border-radius: 2px; background: var(--outline-variant); transition: background-color 0.15s, height 0.15s;
+}
+#history-resizer:hover::after, #history-resizer.dragging::after, #history-resizer:focus-visible::after { background: var(--primary); height: 96px; margin-top: -48px; }
+#history-resizer:focus-visible { outline: none; }
+#history {
+  flex: 0 0 auto; width: clamp(320px, var(--history-width, 44%), calc(100% - 372px)); min-width: 0; min-height: 0;
+  display: flex; flex-direction: column; overflow: hidden;
+  border: 1px solid var(--outline-variant); border-radius: 12px; background: var(--bg);
+}
+#history:focus-within { outline: 2px solid var(--primary); outline-offset: -2px; }
 .history-heading {
   display: flex;
   flex-wrap: wrap;
@@ -369,11 +383,11 @@ footer a { margin-left: auto; white-space: nowrap; }
 }
 #history-content.wrap-lines { white-space: pre-wrap; overflow-wrap: anywhere; }
 #history-content:focus, #conversation-content:focus { outline: none; }
-#conversation-content { flex: 1; min-height: 0; min-width: 0; overflow: auto; padding: 0 24px 24px; background: var(--bg); }
+#conversation-content { flex: 1; min-height: 0; min-width: 0; overflow: auto; padding: 0 18px 20px; background: var(--bg); }
 .chat-toolbar {
   position: sticky; top: 0; z-index: 1;
   display: flex; align-items: center; flex-wrap: wrap; gap: 8px;
-  margin: 0 -24px 20px; padding: 10px 24px;
+  margin: 0 -18px 16px; padding: 10px 18px;
   background: var(--bg);
   border-bottom: 1px solid var(--outline-variant);
 }

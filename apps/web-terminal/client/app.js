@@ -27,6 +27,8 @@ const AGENT_NAMES = { claude: 'Claude Code', codex: 'Codex' };
 let agentPreference = AGENT_NAMES[preference('agent-preference', 'claude')] ? preference('agent-preference', 'claude') : 'claude';
 const agentName = () => AGENT_NAMES[agent] || AGENT_NAMES[agentPreference];
 let expires = 0, historyOpen = false, historyTimer, historyMode = 'terminal';
+// historyChoice remembers the tab the user picked; historyReopen restores the panel after a switch or reconnect.
+let historyChoice = 'chat', historyReopen = false, historyQuiet = false, autoTimer, autoSince = 0;
 const chat = conversationView({ send: sendFrame, connected, agentName });
 let pendingAck = 0, ackTimer, submission;
 let heartbeatTimer, retryTimer, retryAttempts = 0, recoveryDeadline = 0, lastReceived = 0, connectionId = '', uncertainSend = false;
@@ -59,7 +61,12 @@ function setMode(mode) {
   $('composer').hidden = terminalMode && !manualComposer;
   $('attach').hidden = terminalMode;
   $('toggle-composer').textContent = $('composer').hidden ? '展开输入框' : '收起输入框';
-  $('hint').textContent = selected?.kind === 'ssh' ? '临时 SSH：断开、切换或连接到期会关闭登录 shell；重新连接会新建。' : terminalMode ? '直接在终端输入；支持 Tab、方向键、Ctrl+C 和全屏程序。' : `点击终端操作 ${agentName()} 菜单；上滚查看只读历史。`;
+  $('hint').textContent = selected?.kind === 'ssh' ? '临时 SSH：断开、切换或连接到期会关闭登录 shell；重新连接会新建。' : terminalMode ? '直接在终端输入；上滚在右侧打开历史面板，终端照常可用。' : `点击终端操作 ${agentName()} 菜单；上滚在右侧阅读对话，终端照常可用。`;
+  if (historyOpen) {
+    $('history-chat').hidden = terminalMode;
+    const wanted = terminalMode || historyChoice === 'terminal' ? 'terminal' : 'chat';
+    if (wanted !== historyMode) historyTab(wanted, { focus: false });
+  }
   resize();
 }
 function sendFrame(frame) { if (socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ ...frame, epoch })); }
@@ -78,7 +85,7 @@ function resize() {
   });
 }
 function input(data) {
-  if (!connected() || submission || historyOpen) return;
+  if (!connected() || submission) return;
   if (encoder.encode(data).length > 16000) { notify('单次文本过长，请分段发送。'); return; }
   sendFrame({ type: 'input', data });
 }
@@ -91,33 +98,51 @@ function updateExpiry() {
 }
 setInterval(updateExpiry, 1000);
 function closeHistory(focus = true) {
-  historyOpen = false; chat.close(); clearTimeout(historyTimer); $('history').hidden = true; $('history-content').textContent = '';
+  historyOpen = false; chat.close(); clearTimeout(historyTimer); clearAuto();
+  $('history').hidden = $('history-resizer').hidden = true; $('history-content').textContent = '';
+  $('open-history').setAttribute('aria-pressed', 'false');
   if (focus && opened) term.focus();
 }
-function historyTab(mode) {
-  historyMode = mode; clearTimeout(historyTimer); chat.close();
+function readTerminalHistory(quiet) {
+  clearTimeout(historyTimer); historyQuiet = quiet;
+  if (!quiet) $('history-content').textContent = '正在读取历史…';
+  sendFrame({ type: 'history' });
+  historyTimer = setTimeout(() => { if (historyOpen && historyMode === 'terminal' && !historyQuiet) $('history-content').textContent = '读取超时，请稍后重试。'; }, 5000);
+}
+function historyTab(mode, { focus = true } = {}) {
+  historyMode = mode; clearTimeout(historyTimer); clearAuto(); chat.close();
   const isChat = mode === 'chat';
   $('history-content').hidden = isChat; $('conversation-content').hidden = !isChat;
   $('history-wrap').hidden = isChat;
   $('history-chat').setAttribute('aria-pressed', String(isChat));
   $('history-terminal').setAttribute('aria-pressed', String(!isChat));
-  document.querySelector('.history-tip').textContent = isChat ? `${agentName()} 原始消息 · Markdown 阅读 · 返回终端可处理菜单与输入` : '最近最多 1000 行及当前屏幕；Shift＋滚轮或底部滚动条横向查看。';
-  if (isChat) { chat.open(); $('conversation-content').focus(); }
-  else {
-    $('history-content').textContent = '正在读取历史…'; $('history-content').focus();
-    sendFrame({ type: 'history' });
-    historyTimer = setTimeout(() => { if (historyOpen && historyMode === 'terminal') $('history-content').textContent = '读取超时，请返回实时终端后重试。'; }, 5000);
-  }
+  document.querySelector('.history-tip').textContent = isChat ? `${agentName()} 原始消息 · Markdown 阅读 · 有新输出时自动更新` : '最近最多 1000 行及当前屏幕 · 有新输出时自动更新；Shift＋滚轮横向查看。';
+  if (isChat) { chat.open(); if (focus) $('conversation-content').focus(); }
+  else { readTerminalHistory(false); if (focus) $('history-content').focus(); }
 }
-function openHistory() {
-  if (!connected() || historyOpen || selected?.kind === 'ssh') return;
-  historyOpen = true; $('history').hidden = false;
+// The panel sits beside the live terminal, so opening it never blocks input or steals focus from wheel use.
+function openHistory(focus = true) {
+  if (!connected() || selected?.kind === 'ssh') return;
+  historyOpen = true; $('history').hidden = $('history-resizer').hidden = false;
+  $('open-history').setAttribute('aria-pressed', 'true');
   $('history-chat').hidden = terminalMode;
-  historyTab(terminalMode ? 'terminal' : 'chat');
+  historyTab(terminalMode || historyChoice === 'terminal' ? 'terminal' : 'chat', { focus });
 }
-$('open-history').onclick = openHistory;
-$('history-chat').onclick = () => historyTab('chat');
-$('history-terminal').onclick = () => historyTab('terminal');
+function clearAuto() { clearTimeout(autoTimer); autoTimer = undefined; autoSince = 0; }
+// Follow new output: refresh once it settles, and at most every 10 s while it keeps streaming.
+function scheduleAuto() {
+  const now = Date.now(); autoSince ||= now; clearTimeout(autoTimer);
+  const delay = Math.min(historyMode === 'chat' ? 2500 : 1500, Math.max(0, autoSince + 10000 - now));
+  autoTimer = setTimeout(() => {
+    autoTimer = undefined; autoSince = 0;
+    if (!historyOpen || !connected() || document.hidden) return;
+    if (historyMode === 'chat') chat.refresh(); else if (!selectionIn($('history-content'))) readTerminalHistory(true);
+  }, delay);
+}
+function selectionIn(element) { const s = getSelection(); return Boolean(s && !s.isCollapsed && element.contains(s.anchorNode)); }
+$('open-history').onclick = () => { historyReopen = false; if (historyOpen) closeHistory(); else openHistory(); };
+$('history-chat').onclick = () => { historyChoice = 'chat'; historyTab('chat'); };
+$('history-terminal').onclick = () => { historyChoice = 'terminal'; historyTab('terminal'); };
 $('history-wrap').onclick = () => {
   const wrapped = $('history-content').classList.toggle('wrap-lines');
   $('history-wrap').setAttribute('aria-pressed', String(wrapped));
@@ -126,12 +151,34 @@ $('history-wrap').onclick = () => {
 $('history-content').addEventListener('wheel', event => {
   if (event.shiftKey && event.deltaY && !event.deltaX) { event.preventDefault(); $('history-content').scrollLeft += event.deltaY; }
 }, { passive: false });
-$('history-close').onclick = () => closeHistory();
-$('history').onkeydown = event => { if (event.key === 'Escape') { event.preventDefault(); closeHistory(); } };
+$('history-close').onclick = () => { historyReopen = false; closeHistory(); };
+$('history').onkeydown = event => { if (event.key === 'Escape') { event.preventDefault(); historyReopen = false; closeHistory(); } };
+const stage = document.querySelector('.stage');
+function historyWidth(px) { stage.style.setProperty('--history-width', `${Math.round(Math.max(320, px))}px`); }
+if (Number(preference('history-width', '0')) > 0) historyWidth(Number(preference('history-width', '0')));
+$('history-resizer').onpointerdown = event => {
+  event.preventDefault(); const bar = event.currentTarget, right = stage.getBoundingClientRect().right;
+  bar.setPointerCapture(event.pointerId); bar.classList.add('dragging');
+  bar.onpointermove = e => historyWidth(right - e.clientX - bar.offsetWidth / 2);
+  bar.onpointerup = bar.onpointercancel = () => {
+    bar.onpointermove = bar.onpointerup = bar.onpointercancel = null; bar.classList.remove('dragging');
+    savePreference('history-width', Math.round($('history').getBoundingClientRect().width));
+  };
+};
+$('history-resizer').onkeydown = event => {
+  const step = { ArrowLeft: 40, ArrowRight: -40 }[event.key];
+  if (!step) return;
+  event.preventDefault(); const width = $('history').getBoundingClientRect().width + step;
+  historyWidth(width); savePreference('history-width', Math.round(Math.max(320, width)));
+};
 term.attachCustomWheelEventHandler(event => {
   if (event.ctrlKey) { event.preventDefault(); return false; }
   if (selected && selected.kind !== 'ssh') {
-    event.preventDefault(); if (event.deltaY < 0) openHistory(); return false;
+    // tmux redraws the pane, so xterm has no scrollback here: open the panel, or scroll it when already open.
+    event.preventDefault();
+    if (historyOpen) (historyMode === 'chat' ? $('conversation-content') : $('history-content')).scrollTop += event.deltaY;
+    else if (event.deltaY < 0) openHistory(false);
+    return false;
   }
   // Never let alternate-screen wheel fallback generate Up/Down input.
   if (term.buffer.active.type === 'alternate' && term.modes.mouseTrackingMode === 'none') {
@@ -154,7 +201,7 @@ function sidebar(collapsed) {
 }
 $('toggle-sidebar').onclick = () => sidebar(!$('sidebar').hidden);
 document.addEventListener('focusin', () => {
-  $('focus-status').textContent = historyOpen ? '只读历史 · 不发送按键' : document.activeElement === $('draft') ? '正在输入消息' : document.activeElement?.closest('#terminal') ? '正在操作终端' : '选择终端或消息输入框';
+  $('focus-status').textContent = document.activeElement?.closest('#history') ? '正在阅读历史 · 终端仍在实时运行' : document.activeElement === $('draft') ? '正在输入消息' : document.activeElement?.closest('#terminal') ? '正在操作终端' : '选择终端或消息输入框';
 });
 applyFont(); sidebar(preference('terminal-sidebar', 'open') === 'closed');
 async function api(path, payload) {
@@ -205,14 +252,14 @@ function ack(ws, forEpoch, bytes) {
 function detach({ keepRecovery = false } = {}) {
   clearInterval(heartbeatTimer); heartbeatTimer = undefined;
   if (!keepRecovery) cancelRecovery();
-  closeHistory(false); expires = 0;
+  historyReopen ||= historyOpen; closeHistory(false); expires = 0;
   revision++; switchQueued = undefined; connecting = ready = false; clearAck();
   const old = socket; socket = undefined; connectionId = ''; old?.close();
   if (submission) { clearTimeout(submission.timer); submission = undefined; notify('发送结果尚未确认，草稿已保留。请查看终端后决定是否重发。'); }
   updateState('已断开');
 }
 function select(session) {
-  closeHistory(false);
+  historyReopen ||= historyOpen; closeHistory(false);
   if (selected) draft().text = $('draft').value;
   else if ($('draft').value) draft(session).text = $('draft').value;
   selected = session; manualComposer = false; setMode('terminal'); $('draft').value = draft().text; $('session-name').textContent = session.name;
@@ -256,6 +303,8 @@ async function connect(session, { automatic = false } = {}) {
       if (msg.epoch !== epoch) return;
       if (msg.type === 'ready') {
         expires = msg.expires; connectionId = msg.connectionId || ''; ready = true; connecting = false; updateState('已连接'); focusInput(); resize();
+        if (historyReopen && selected?.kind !== 'ssh') openHistory(false);
+        historyReopen = false;
         if (automatic) notify(uncertainSend ? '已恢复原 tmux 会话；上次图片消息结果未确认，请先核对，未自动重发。' : '已恢复原 tmux 会话，没有重发指令。');
         const next = switchQueued; switchQueued = undefined;
         if (next) connect(next);
@@ -271,12 +320,16 @@ async function connect(session, { automatic = false } = {}) {
       } else if (msg.type === 'history' || msg.type === 'history-error') {
         if (!historyOpen || historyMode !== 'terminal') return;
         clearTimeout(historyTimer);
-        renderHistory($('history-content'), msg.type === 'history' ? msg.data : '历史读取失败，请返回实时终端后重试。');
-        $('history-content').scrollLeft = 0;
-        $('history-content').scrollTop = Math.max(0, $('history-content').scrollHeight - $('history-content').clientHeight - 120);
+        const view = $('history-content'), quiet = historyQuiet;
+        if (quiet && (msg.type !== 'history' || selectionIn(view))) return; // Keep what the reader is looking at.
+        const atBottom = view.scrollHeight - view.scrollTop - view.clientHeight < 80, top = view.scrollTop, left = view.scrollLeft;
+        renderHistory(view, msg.type === 'history' ? msg.data : '历史读取失败，请稍后重试。');
+        if (!quiet) { view.scrollLeft = 0; view.scrollTop = Math.max(0, view.scrollHeight - view.clientHeight - 120); }
+        else { view.scrollLeft = left; view.scrollTop = atBottom ? view.scrollHeight : top; }
       } else if (msg.type === 'output') {
         const forEpoch = epoch;
         term.write(msg.data, () => ack(ws, forEpoch, encoder.encode(msg.data).length));
+        if (historyOpen) scheduleAuto();
       } else if (['submitted', 'submission-error'].includes(msg.type) && msg.requestId === submission?.id) {
         clearTimeout(submission.timer); submission = undefined;
         if (msg.type === 'submitted') clearDraft(); else notify(msg.error);
@@ -327,6 +380,7 @@ window.addEventListener('focus', probeConnection);
 document.addEventListener('visibilitychange', () => {
   if (document.hidden) return;
   probeConnection();
+  if (historyOpen) scheduleAuto();
   if (Date.now() - refreshedAt > 60000) void refresh(); // Sessions may have changed while away.
 });
 function clearDraft() {
@@ -334,7 +388,6 @@ function clearDraft() {
   d.files = []; d.text = ''; $('draft').value = ''; renderAttachments(); notify();
 }
 function submit() {
-  if (historyOpen) closeHistory(false);
   const d = draft(); d.text = $('draft').value;
   if (!connected() || submission || d.files.some(x => !x.uploaded || x.uploading)) return;
   if (!d.text.trim() && !d.files.length) return;

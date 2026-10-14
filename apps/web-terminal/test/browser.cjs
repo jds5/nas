@@ -130,12 +130,19 @@ async function until(check) {
       const historyTop = await page.locator('#history-content').evaluate(el => el.scrollTop);
       await page.locator('#history-content').hover(); await page.mouse.wheel(0, -400);
       await until(async () => await page.locator('#history-content').evaluate(el => el.scrollTop) < historyTop);
+      // The panel sits beside the live terminal: both visible, input still goes through, and the panel follows new output.
+      const termBox = await page.locator('#terminal-wrap').boundingBox(), panelBox = await page.locator('#history').boundingBox();
+      assert.ok(termBox.width > 200 && panelBox.x >= termBox.x + termBox.width, 'history panel must sit beside the terminal');
+      assert.equal(await page.locator('#open-history').getAttribute('aria-pressed'), 'true');
+      const resizer = await page.locator('#history-resizer').boundingBox();
+      await page.mouse.move(resizer.x + resizer.width / 2, resizer.y + resizer.height / 2); await page.mouse.down();
+      await page.mouse.move(resizer.x - 60, resizer.y + resizer.height / 2); await page.mouse.up();
+      assert.ok((await page.locator('#history').boundingBox()).width > panelBox.width + 40, 'dragging the divider widens the panel');
       // Actual colored, soft-wrapped output from the isolated tmux fixture.
-      await page.locator('#history-close').click();
       await page.locator('#draft').fill("printf '\\033[1;31mSTYLE_%s\\033[0m\\n' 'OK'; printf '<img src=x onerror=alert(1)>\\n'; printf 'TABLE_START'; i=0; while [ $i -lt 500 ]; do printf 'x'; i=$((i+1)); done; printf 'RIGHT_%s\\n' 'EDGE'");
       await page.locator('#draft').press('Enter');
       await until(() => output.includes('RIGHT_EDGE'));
-      await new Promise(r => setTimeout(r, 200));
+      assert.equal(await page.locator('#history').isVisible(), true, 'sending must not close the panel');
       const beforeStyledHistory = inputCount;
       await page.locator('#terminal').hover(); await page.mouse.wheel(0, -500);
       await until(async () => (await page.locator('#history-content').textContent()).includes('RIGHT_EDGE'));
@@ -160,6 +167,12 @@ async function until(check) {
       assert.equal(await page.locator('#history-content').textContent(), historyText);
       await page.locator('#history-wrap').click();
       await page.locator('#history-content').press('Escape'); assert.equal(await page.locator('#history').isHidden(), true);
+      // An open panel follows the user to the next session.
+      await page.locator('#open-history').click(); await until(async () => await page.locator('#history').isVisible());
+      await choose('中文测试');
+      await until(async () => { const text = await page.locator('#history-content').textContent(); return await page.locator('#history').isVisible() && text !== '正在读取历史…' && !text.includes('RIGHT_EDGE'); });
+      await page.locator('#open-history').click(); assert.equal(await page.locator('#history').isHidden(), true);
+      await choose('demo-project');
 
       assert.equal(await page.locator('#state').textContent(), '已连接');
       assert.equal(wsCount, 1); assert.equal(ticketRequests, 1);
