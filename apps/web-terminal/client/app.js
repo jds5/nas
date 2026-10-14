@@ -31,8 +31,6 @@ let expires = 0, historyOpen = false, historyTimer, historyMode = 'terminal';
 let historyChoice = 'chat', historyReopen = false, historyQuiet = false, autoTimer, autoSince = 0, liveTimer;
 // Conversation view (default) puts the chat first for agent panes; 'terminal' keeps the classic layout with the side panel.
 let viewPreference = preference('view-mode', 'chat') === 'terminal' ? 'terminal' : 'chat';
-const DOCK_STATES = ['collapsed', 'compact', 'expanded'];
-let dockState = DOCK_STATES.includes(preference('terminal-dock', 'compact')) ? preference('terminal-dock', 'compact') : 'compact';
 const chat = conversationView({ send: sendFrame, connected, agentName });
 let pendingAck = 0, ackTimer, submission;
 let heartbeatTimer, retryTimer, retryAttempts = 0, recoveryDeadline = 0, lastReceived = 0, connectionId = '', uncertainSend = false;
@@ -65,7 +63,7 @@ function setMode(mode) {
   $('composer').hidden = terminalMode && !manualComposer;
   $('attach').hidden = terminalMode;
   $('toggle-composer').textContent = $('composer').hidden ? '展开输入框' : '收起输入框';
-  $('hint').textContent = selected?.kind === 'ssh' ? '临时 SSH：断开、切换或连接到期会关闭登录 shell；重新连接会新建。' : terminalMode ? '直接在终端输入；上滚在右侧打开历史面板，终端照常可用。' : viewPreference === 'chat' ? `对话模式：上方自动跟随 ${agentName()} 对话，下方实时终端可点击处理菜单；右上角可切回终端模式。` : `点击终端操作 ${agentName()} 菜单；上滚在右侧阅读对话，终端照常可用。`;
+  $('hint').textContent = selected?.kind === 'ssh' ? '临时 SSH：断开、切换或连接到期会关闭登录 shell；重新连接会新建。' : terminalMode ? '直接在终端输入；上滚在右侧打开历史面板，终端照常可用。' : viewPreference === 'chat' ? `对话模式：自动跟随 ${agentName()} 对话；处理菜单、权限确认或查看生成进度时点输入框里的“终端”；右上角可切回终端模式。` : `点击终端操作 ${agentName()} 菜单；上滚在右侧阅读对话，终端照常可用。`;
   if (historyOpen && !chatFirst()) {
     $('history-chat').hidden = terminalMode;
     const wanted = terminalMode || historyChoice === 'terminal' ? 'terminal' : 'chat';
@@ -75,7 +73,8 @@ function setMode(mode) {
 }
 const stage = document.querySelector('.stage');
 function chatFirst() { return stage.classList.contains('chat-first'); }
-// Conversation view applies only to agent panes; the terminal dock merely crops the full-size terminal.
+// Conversation view applies only to agent panes. The live terminal pops up as a sheet over the chat when needed;
+// it keeps its full size underneath (the sheet only crops it), so showing or hiding it never resizes tmux.
 function applyView() {
   const agentPane = !terminalMode && selected && selected.kind !== 'ssh';
   const want = Boolean(agentPane && viewPreference === 'chat' && connected());
@@ -92,7 +91,8 @@ function setChatFirst(want) {
   const hadFocus = document.activeElement === $('draft');
   if (want) $('history').append($('composer')); else composerHome.before($('composer'));
   if (want) $('composer').hidden = false;
-  $('toggle-composer').hidden = want;
+  $('toggle-composer').hidden = want; $('terminal-peek').hidden = !want;
+  if (!want) terminalSheet(false);
   $('attach').textContent = want ? '+' : '添加图片'; $('attach').setAttribute('aria-label', '添加图片');
   $('send').textContent = want ? '↑' : '发送 ↵'; $('send').setAttribute('aria-label', '发送');
   $('draft').placeholder = want ? `给 ${agentName()} 发消息，可粘贴或拖入图片…` : '输入消息，或粘贴、拖入图片…';
@@ -108,11 +108,10 @@ function fitDraft() {
   field.style.height = '0px'; // Collapse to min-height so scrollHeight measures the text, not rows=6.
   field.style.height = `${Math.min(field.scrollHeight + 2, Math.max(120, Math.round(window.innerHeight * 0.4)))}px`;
 }
-function setDock(state) {
-  dockState = state; savePreference('terminal-dock', state);
-  for (const name of DOCK_STATES) { stage.classList.toggle(`dock-${name}`, name === state); $(`dock-${name}`).setAttribute('aria-pressed', String(name === state)); }
+function terminalSheet(open) {
+  stage.classList.toggle('terminal-open', open); $('terminal-peek').setAttribute('aria-pressed', String(open));
+  if (open) term.focus();
 }
-setDock(dockState);
 function chooseView(value) {
   viewPreference = value; savePreference('view-mode', value);
   setMode(agent || 'terminal'); focusInput();
@@ -203,7 +202,8 @@ $('history-close').onclick = () => { historyReopen = false; closeHistory(); };
 $('history').onkeydown = event => { if (event.key === 'Escape' && !chatFirst()) { event.preventDefault(); historyReopen = false; closeHistory(); } };
 $('view-chat').onclick = () => chooseView('chat');
 $('view-terminal').onclick = () => chooseView('terminal');
-for (const name of DOCK_STATES) $(`dock-${name}`).onclick = () => { setDock(name); if (name !== 'collapsed') term.focus(); };
+$('terminal-peek').onclick = () => terminalSheet(!stage.classList.contains('terminal-open'));
+$('terminal-close').onclick = () => { terminalSheet(false); $('draft').focus(); };
 function fullTerminalHeight() { stage.style.setProperty('--term-height', `${Math.max(120, stage.clientHeight - 22)}px`); }
 function historyWidth(px) { stage.style.setProperty('--history-width', `${Math.round(Math.max(320, px))}px`); }
 if (Number(preference('history-width', '0')) > 0) historyWidth(Number(preference('history-width', '0')));
@@ -227,6 +227,7 @@ term.attachCustomWheelEventHandler(event => {
   if (selected && selected.kind !== 'ssh') {
     // tmux redraws the pane, so xterm has no scrollback here: open the panel, or scroll it when already open.
     event.preventDefault();
+    if (chatFirst()) return false; // The sheet covers the chat; wheel there does nothing rather than scroll unseen text.
     if (historyOpen) (historyMode === 'chat' ? $('conversation-content') : $('history-content')).scrollTop += event.deltaY;
     else if (event.deltaY < 0) openHistory(false);
     return false;
@@ -252,7 +253,7 @@ function sidebar(collapsed) {
 }
 $('toggle-sidebar').onclick = () => sidebar(!$('sidebar').hidden);
 document.addEventListener('focusin', () => {
-  $('focus-status').textContent = document.activeElement?.closest('#history') ? '正在阅读历史 · 终端仍在实时运行' : document.activeElement === $('draft') ? '正在输入消息' : document.activeElement?.closest('#terminal') ? '正在操作终端' : '选择终端或消息输入框';
+  $('focus-status').textContent = document.activeElement === $('draft') ? '正在输入消息' : document.activeElement?.closest('#history') ? (chatFirst() ? '正在阅读对话' : '正在阅读历史 · 终端仍在实时运行') : document.activeElement?.closest('#terminal') ? '正在操作终端' : '选择终端或消息输入框';
 });
 applyFont(); sidebar(preference('terminal-sidebar', 'open') === 'closed');
 async function api(path, payload) {

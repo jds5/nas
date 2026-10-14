@@ -49,7 +49,7 @@
 cd /home/yao/code/nas/apps/web-terminal
 docker build --target test -t nas-web-terminal:test .
 docker run --rm --init --cap-drop ALL --security-opt no-new-privileges nas-web-terminal:test
-docker build -t nas-web-terminal:0.6.6 .
+docker build -t nas-web-terminal:0.6.7 .
 ```
 
 测试使用隔离 tmux server 和临时 RSA 测试密钥，覆盖错误/缺失 JWT、exp/nbf/iss/aud、身份、Origin/CSRF、重放、真实终端输入输出与 resize、断开与到期后会话存活。测试密钥不进入生产镜像；无环境变量免鉴权开关。
@@ -232,3 +232,14 @@ Claude Code 对话由安卓桥接同一逻辑读取：按 `~/.claude/sessions/<p
 - 终端模式布局不变（只是消息样式与对话模式一致）。
 
 只改前端，协议、鉴权与读取器不变。回滚：镜像改回 `nas-web-terminal:0.6.5`。
+
+## 终端改为按需弹出（0.6.7，2026-10-14）
+
+用户反馈：底部常驻的实时终端占空间，顶部两个“对话 / 终端”切换显得杂乱。
+
+- **为什么仍需实时终端**：与终端历史无关。智能体的菜单、权限确认、首次“信任目录”、`/` 命令的交互选择和 Esc 中断都只在终端界面里；对话阅读只显示已完成的消息，生成过程也只能在终端看到。
+- **按需弹出**：去掉 0.6.6 的底部停靠栏，改为输入框里的“终端”按钮，有新输出时按钮上显示绿点。点击后终端从底部弹出，盖住对话下部约 62% 的高度，可直接操作；点“收起终端”或再点按钮关闭。平时对话占满整个区域。终端在后台一直保持原尺寸，弹出层只是裁切显示，所以开关不会改变 tmux 尺寸；隐藏时用 visibility 而不是 display，保证终端仍能正常测量尺寸。弹出层上的滚轮不做任何事，不会滚动被遮住的对话，也不会向终端发送按键。
+- **只保留一个切换**：对话模式不再显示面板里的“对话 / 终端历史”标签，只保留工具栏的“对话 / 终端”。终端历史在终端模式的右侧“历史面板”中查看。
+- 不再使用 0.6.6 的 `terminal-dock` 本地设置（浏览器里残留的值会被忽略）。
+
+只改前端。回滚：镜像改回 `nas-web-terminal:0.6.6`。
