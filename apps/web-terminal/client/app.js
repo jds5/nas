@@ -31,6 +31,8 @@ let expires = 0, historyOpen = false, historyTimer, historyMode = 'terminal';
 let historyChoice = 'chat', historyReopen = false, historyQuiet = false, autoTimer, autoSince = 0, liveTimer;
 // Conversation view (default) puts the chat first for agent panes; 'terminal' keeps the classic layout with the side panel.
 let viewPreference = preference('view-mode', 'chat') === 'terminal' ? 'terminal' : 'chat';
+const DOCK_STATES = ['collapsed', 'compact', 'expanded'];
+let dockState = DOCK_STATES.includes(preference('terminal-dock', 'compact')) ? preference('terminal-dock', 'compact') : 'compact';
 const chat = conversationView({ send: sendFrame, connected, agentName });
 let pendingAck = 0, ackTimer, submission;
 let heartbeatTimer, retryTimer, retryAttempts = 0, recoveryDeadline = 0, lastReceived = 0, connectionId = '', uncertainSend = false;
@@ -63,7 +65,7 @@ function setMode(mode) {
   $('composer').hidden = terminalMode && !manualComposer;
   $('attach').hidden = terminalMode;
   $('toggle-composer').textContent = $('composer').hidden ? '展开输入框' : '收起输入框';
-  $('hint').textContent = selected?.kind === 'ssh' ? '临时 SSH：断开、切换或连接到期会关闭登录 shell；重新连接会新建。' : terminalMode ? '直接在终端输入；上滚在右侧打开历史面板，终端照常可用。' : viewPreference === 'chat' ? `对话模式：自动跟随 ${agentName()} 对话；处理菜单、权限确认或查看生成进度时点输入框里的“终端”；右上角可切回终端模式。` : `点击终端操作 ${agentName()} 菜单；上滚在右侧阅读对话，终端照常可用。`;
+  $('hint').textContent = selected?.kind === 'ssh' ? '临时 SSH：断开、切换或连接到期会关闭登录 shell；重新连接会新建。' : terminalMode ? '直接在终端输入；上滚在右侧打开历史面板，终端照常可用。' : viewPreference === 'chat' ? `对话模式：自动跟随 ${agentName()} 对话；底部实时终端显示运行状态，处理菜单或权限确认时点“展开”；右上角可切回终端模式。` : `点击终端操作 ${agentName()} 菜单；上滚在右侧阅读对话，终端照常可用。`;
   if (historyOpen && !chatFirst()) {
     $('history-chat').hidden = terminalMode;
     const wanted = terminalMode || historyChoice === 'terminal' ? 'terminal' : 'chat';
@@ -73,8 +75,7 @@ function setMode(mode) {
 }
 const stage = document.querySelector('.stage');
 function chatFirst() { return stage.classList.contains('chat-first'); }
-// Conversation view applies only to agent panes. The live terminal pops up as a sheet over the chat when needed;
-// it keeps its full size underneath (the sheet only crops it), so showing or hiding it never resizes tmux.
+// Conversation view applies only to agent panes; the terminal dock merely crops the full-size terminal.
 function applyView() {
   const agentPane = !terminalMode && selected && selected.kind !== 'ssh';
   const want = Boolean(agentPane && viewPreference === 'chat' && connected());
@@ -91,8 +92,7 @@ function setChatFirst(want) {
   const hadFocus = document.activeElement === $('draft');
   if (want) $('history').append($('composer')); else composerHome.before($('composer'));
   if (want) $('composer').hidden = false;
-  $('toggle-composer').hidden = want; $('terminal-peek').hidden = !want;
-  if (!want) terminalSheet(false);
+  $('toggle-composer').hidden = want;
   $('attach').textContent = want ? '+' : '添加图片'; $('attach').setAttribute('aria-label', '添加图片');
   $('send').textContent = want ? '↑' : '发送 ↵'; $('send').setAttribute('aria-label', '发送');
   $('draft').placeholder = want ? `给 ${agentName()} 发消息，可粘贴或拖入图片…` : '输入消息，或粘贴、拖入图片…';
@@ -108,10 +108,11 @@ function fitDraft() {
   field.style.height = '0px'; // Collapse to min-height so scrollHeight measures the text, not rows=6.
   field.style.height = `${Math.min(field.scrollHeight + 2, Math.max(120, Math.round(window.innerHeight * 0.4)))}px`;
 }
-function terminalSheet(open) {
-  stage.classList.toggle('terminal-open', open); $('terminal-peek').setAttribute('aria-pressed', String(open));
-  if (open) term.focus();
+function setDock(state) {
+  dockState = state; savePreference('terminal-dock', state);
+  for (const name of DOCK_STATES) { stage.classList.toggle(`dock-${name}`, name === state); $(`dock-${name}`).setAttribute('aria-pressed', String(name === state)); }
 }
+setDock(dockState);
 function chooseView(value) {
   viewPreference = value; savePreference('view-mode', value);
   setMode(agent || 'terminal'); focusInput();
@@ -127,7 +128,7 @@ function resize() {
   requestAnimationFrame(() => {
     frameScheduled = false;
     if (!connected()) return;
-    const s = size(), next = `${s.cols}x${s.rows}`;
+    const s = size(), next = `${s.cols}x${s.rows}`; dockHeight();
     if (next !== lastSize) { sendFrame({ type: 'resize', ...s }); lastSize = next; }
   });
 }
@@ -202,9 +203,16 @@ $('history-close').onclick = () => { historyReopen = false; closeHistory(); };
 $('history').onkeydown = event => { if (event.key === 'Escape' && !chatFirst()) { event.preventDefault(); historyReopen = false; closeHistory(); } };
 $('view-chat').onclick = () => chooseView('chat');
 $('view-terminal').onclick = () => chooseView('terminal');
-$('terminal-peek').onclick = () => terminalSheet(!stage.classList.contains('terminal-open'));
-$('terminal-close').onclick = () => { terminalSheet(false); $('draft').focus(); };
+for (const name of DOCK_STATES) $(`dock-${name}`).onclick = () => { setDock(name); if (name !== 'collapsed') term.focus(); };
 function fullTerminalHeight() { stage.style.setProperty('--term-height', `${Math.max(120, stage.clientHeight - 22)}px`); }
+// The small dock shows the terminal's last 7 rows: Claude Code's status line (✻ … esc to interrupt), the blank line,
+// its framed input box, the mode line, and the tmux status bar.
+const DOCK_ROWS = 7;
+function dockHeight() {
+  const screen = $('terminal').querySelector('.xterm-screen');
+  if (!opened || !screen || !term.rows) return;
+  stage.style.setProperty('--dock-compact', `${Math.ceil(screen.clientHeight / term.rows * DOCK_ROWS) + 14}px`);
+}
 function historyWidth(px) { stage.style.setProperty('--history-width', `${Math.round(Math.max(320, px))}px`); }
 if (Number(preference('history-width', '0')) > 0) historyWidth(Number(preference('history-width', '0')));
 $('history-resizer').onpointerdown = event => {
@@ -227,7 +235,6 @@ term.attachCustomWheelEventHandler(event => {
   if (selected && selected.kind !== 'ssh') {
     // tmux redraws the pane, so xterm has no scrollback here: open the panel, or scroll it when already open.
     event.preventDefault();
-    if (chatFirst()) return false; // The sheet covers the chat; wheel there does nothing rather than scroll unseen text.
     if (historyOpen) (historyMode === 'chat' ? $('conversation-content') : $('history-content')).scrollTop += event.deltaY;
     else if (event.deltaY < 0) openHistory(false);
     return false;

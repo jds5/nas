@@ -81,15 +81,20 @@ async function until(check) {
       await until(() => output.includes('网页上传的附件') && output.includes('.png'));
       await new Promise(r => setTimeout(r, 200));
       const codexInputBeforeWheel = inputCount;
-      // Agent panes open in the conversation view by default: the chat fills the stage, the terminal is hidden until asked for.
+      // Agent panes open in the conversation view by default: chat on top, live terminal strip below.
       await until(async () => await page.locator('.stage.chat-first').count() === 1 && await page.locator('#chat-messages h1').count() === 1);
       assert.equal(await page.locator('#view-switch').isVisible(), true);
-      assert.equal(await page.locator('.history-heading').isVisible(), false, 'only one chat/terminal switch is shown');
+      assert.equal(await page.locator('#history-close').isVisible(), false);
       assert.equal(await page.locator('#open-history').isVisible(), false);
-      assert.equal(await page.locator('#terminal-wrap').isVisible(), false);
-      const stageBox = await page.locator('.stage').boundingBox(), chatBox = await page.locator('#history').boundingBox();
-      assert.ok(chatBox.height >= stageBox.height - 2, 'conversation uses the full height');
-      await page.locator('#conversation-content').hover(); await page.mouse.wheel(0, -300);
+      await page.waitForTimeout(300);
+      const chatBox = await page.locator('#history').boundingBox(), stripBox = await page.locator('#terminal-wrap').boundingBox();
+      assert.ok(stripBox.y >= chatBox.y + chatBox.height && stripBox.height < chatBox.height, 'terminal strip sits below the chat');
+      assert.equal(await page.locator('.history-heading').isVisible(), false, 'only one chat/terminal switch is shown');
+      // The small dock shows just the terminal's last 7 rows (Claude Code's status line down to the tmux status bar).
+      const screenRows = await page.locator('.xterm-rows > div').count();
+      const cell = await page.locator('.xterm-screen').evaluate(el => el.clientHeight) / screenRows;
+      assert.ok(Math.abs(stripBox.height - (cell * 7 + 14)) <= 2, `small dock is 7 rows high (${stripBox.height} vs ${cell * 7 + 14})`);
+      await page.locator('#terminal-wrap').hover(); await page.mouse.wheel(0, -300);
       assert.equal(await page.locator('#chat-messages h1').textContent(), 'Markdown 对话');
       assert.equal(await page.locator('#chat-messages strong').textContent(), '粗体');
       assert.equal(await page.locator('#chat-messages table td').count(), 14);
@@ -113,24 +118,21 @@ async function until(check) {
       await until(async () => (await page.locator('#chat-messages').textContent()).includes('OLD_PAGE'));
       await page.locator('#chat-newer').click();
       await until(async () => await page.locator('#chat-messages table').count() === 1);
-      // The terminal pops up over the chat on demand; showing or hiding it must not resize the shared tmux window.
-      const resizesBefore = resizeFrames;
-      await page.locator('#terminal-peek').click(); await page.waitForTimeout(300);
-      await page.screenshot({ path: `/artifacts/${label}-terminal-sheet.png` });
-      assert.equal(await page.locator('#terminal-wrap').isVisible(), true);
-      assert.ok((await page.locator('#terminal-wrap').boundingBox()).height > stageBox.height * 0.5);
-      await page.locator('#terminal-wrap').hover(); await page.mouse.wheel(0, -300);
-      await page.locator('#terminal-close').click(); await page.waitForTimeout(300);
-      assert.equal(await page.locator('#terminal-wrap').isVisible(), false);
       assert.equal(inputCount, codexInputBeforeWheel, 'Codex wheel must not recall previous prompts');
-      // Composer sits at the bottom of the conversation, grows with text, and typing never resizes tmux.
-      const composerBox = await page.locator('#composer').boundingBox();
-      assert.ok(composerBox.y + composerBox.height <= stageBox.y + stageBox.height + 1 && composerBox.y > chatBox.y + chatBox.height / 2);
+      // Expanding or collapsing the strip must not resize the shared tmux window.
+      const resizesBefore = resizeFrames;
+      await page.locator('#dock-expanded').click(); await page.waitForTimeout(300);
+      assert.ok((await page.locator('#terminal-wrap').boundingBox()).height > stripBox.height + 100);
+      await page.locator('#dock-collapsed').click(); await page.waitForTimeout(300);
+      assert.ok((await page.locator('#terminal-wrap').boundingBox()).height < 2, 'collapsed dock hides the terminal');
+      await page.locator('#dock-compact').click(); await page.waitForTimeout(300);
+      // Composer sits under the chat, grows with text, and typing never resizes tmux.
+      assert.ok((await page.locator('#composer').boundingBox()).y < stripBox.y, 'composer is inside the conversation');
       const draftHeight = (await page.locator('#draft').boundingBox()).height;
       await page.locator('#draft').fill('一\n二\n三\n四'); await page.locator('#draft').dispatchEvent('input');
       assert.ok((await page.locator('#draft').boundingBox()).height > draftHeight + 40, 'composer grows with its text');
       await page.locator('#draft').fill(''); await page.locator('#draft').dispatchEvent('input'); await page.waitForTimeout(200);
-      assert.equal(resizeFrames, resizesBefore, 'the terminal sheet must not resize tmux');
+      assert.equal(resizeFrames, resizesBefore, 'expanding the terminal strip must not resize tmux');
       await page.locator('#view-terminal').click();
       await until(async () => await page.locator('.stage.chat-first').count() === 0 && await page.locator('#history').isHidden());
       assert.equal(await page.locator('#open-history').isVisible(), true);

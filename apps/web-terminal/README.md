@@ -49,7 +49,7 @@
 cd /home/yao/code/nas/apps/web-terminal
 docker build --target test -t nas-web-terminal:test .
 docker run --rm --init --cap-drop ALL --security-opt no-new-privileges nas-web-terminal:test
-docker build -t nas-web-terminal:0.6.7 .
+docker build -t nas-web-terminal:0.6.8 .
 ```
 
 测试使用隔离 tmux server 和临时 RSA 测试密钥，覆盖错误/缺失 JWT、exp/nbf/iss/aud、身份、Origin/CSRF、重放、真实终端输入输出与 resize、断开与到期后会话存活。测试密钥不进入生产镜像；无环境变量免鉴权开关。
@@ -243,3 +243,13 @@ Claude Code 对话由安卓桥接同一逻辑读取：按 `~/.claude/sessions/<p
 - 不再使用 0.6.6 的 `terminal-dock` 本地设置（浏览器里残留的值会被忽略）。
 
 只改前端。回滚：镜像改回 `nas-web-terminal:0.6.6`。
+
+## 恢复底部终端栏，小窗按行数收矮（0.6.8，2026-10-14）
+
+用户比较后认为 0.6.6 的底部常驻终端栏更好用（可以随时看到运行状态），要求小窗更矮，只要能看到 Claude 的运行状态行。
+
+- 恢复 0.6.6 的底部“实时终端”栏，分收起 / 小窗 / 展开三档，选择保存在本浏览器 localStorage（`terminal-dock`），默认小窗；去掉 0.6.7 的弹出式终端按钮。
+- **小窗只露出终端底部 7 行**。按现场 Claude Code 2.1 画面核对，从下往上依次是：tmux 状态栏、模式行（如 bypass permissions）、输入框下边线、`❯` 输入行、输入框上边线、空行、运行状态行（如 `✻ Thinking… (esc to interrupt)` 或 `✻ … for 43s`）。高度按 xterm 实际行高换算，随字号（A−/A＋）变化，不改变 tmux 尺寸。输入框里有多行草稿时，状态行会被挤到小窗外，需要时点“展开”。
+- 保留 0.6.7 的“只有一个切换”：对话模式不显示“对话 / 终端历史”标签，终端历史在终端模式的右侧面板里查看。也保留 0.6.7 的状态文字修正。
+
+只改前端。回滚：镜像改回 `nas-web-terminal:0.6.7`（弹出式终端）或 `0.6.6`。
