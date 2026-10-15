@@ -142,6 +142,14 @@ async function until(check) {
       await page.locator('#history-close').click();
       await page.locator('#view-chat').click();
       await until(async () => await page.locator('.stage.chat-first').count() === 1 && await page.locator('#chat-messages h1').count() === 1);
+      // A disconnect keeps the conversation view (messages, composer card, dock) instead of falling back to the terminal layout.
+      await page.locator('#detach').click(); await until(async () => await page.locator('#reconnect').isVisible());
+      assert.equal(await page.locator('.stage.chat-first').count(), 1, 'conversation view survives a disconnect');
+      assert.equal(await page.locator('#chat-messages h1').count(), 1, 'messages stay readable while disconnected');
+      assert.equal(await page.locator('#history #composer').count(), 1, 'composer stays in the conversation');
+      assert.equal(await page.locator('#send').isDisabled(), true, 'cannot send while disconnected');
+      await page.locator('#reconnect').click(); await until(async () => (await page.locator('#state').textContent()) === '已连接');
+      await until(async () => await page.locator('.stage.chat-first').count() === 1 && await page.locator('#chat-messages h1').count() === 1);
       await page.locator('#view-terminal').click();
       await until(async () => await page.locator('#history').isHidden());
       for (const method of ['paste', 'drop']) {
@@ -214,15 +222,15 @@ async function until(check) {
       await choose('demo-project');
 
       assert.equal(await page.locator('#state').textContent(), '已连接');
-      assert.equal(wsCount, 1); assert.equal(ticketRequests, 1);
+      assert.equal(wsCount, 2, "switching reuses one WebSocket; the conversation-view reconnect adds one"); assert.equal(ticketRequests, 2);
       await page.locator('#detach').click(); await page.getByRole('button', { name: '重新连接', exact: true }).click();
       await until(async () => await page.locator('#state').textContent() === '已连接');
-      assert.equal(wsCount, 2); assert.deepEqual(errors, []);
+      assert.equal(wsCount, 3); assert.deepEqual(errors, []);
       await page.screenshot({ path: `/artifacts/${label}-terminal.png` });
       const originalDeadline = latestDeadline, sentBeforeRecovery = inputCount;
       await until(() => heartbeatReplies > 0);
       await page.evaluate(() => window.testSockets.at(-1).close(4000, 'heartbeat_timeout'));
-      await until(async () => wsCount === 3 && await page.locator('#state').textContent() === '已连接');
+      await until(async () => wsCount === 4 && await page.locator('#state').textContent() === '已连接');
       assert.equal(latestDeadline, originalDeadline, 'automatic recovery must preserve original deadline');
       assert.ok(inputs.slice(sentBeforeRecovery).every(data => /^(?:\x1b\[[?>0-9;]*[cRn]|\x1b\](?:10|11);rgb:[0-9a-f/]+\x1b\\)$/.test(data)), 'only terminal device replies are allowed on recovery: ' + JSON.stringify(inputs.slice(sentBeforeRecovery)));
       assert.match(await page.locator('#notice').textContent(), /已恢复原 tmux 会话/);
@@ -231,7 +239,7 @@ async function until(check) {
       await until(async () => await page.locator('#state').textContent() === '等待重连');
       await page.locator('#detach').click();
       await new Promise(r => setTimeout(r, 3300));
-      assert.equal(wsCount, 3);
+      assert.equal(wsCount, 4);
 
       await page.locator('#new-ssh').click();
       await until(async () => await page.locator('#state').textContent() === '已连接' && await page.locator('#session-name').textContent() === '临时 SSH · NAS');

@@ -80,6 +80,9 @@ export function conversationView({ send, connected, agentName = () => 'Codex' })
   $('chat-newer').onclick = () => stack.length && request(stack.at(-1), 'newer');
   return {
     open() { reset(); active = true; request(); }, close: reset,
+    // Disconnected: keep the messages on screen but stop requesting; resume follows the newest page again.
+    pause() { active = false; clearTimeout(timer); pending = undefined; busy(false); },
+    resume() { if (active) return; active = true; if (!stack.length && cursor === null) request(null, 'refresh', true); },
     followLatest() { follow = true; }, // After sending, jump to the reply even if the reader had scrolled up.
     refresh() {
       const selection = getSelection();

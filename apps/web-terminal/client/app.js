@@ -78,7 +78,7 @@ function chatFirst() { return stage.classList.contains('chat-first'); }
 // Conversation view applies only to agent panes; the terminal dock merely crops the full-size terminal.
 function applyView() {
   const agentPane = !terminalMode && selected && selected.kind !== 'ssh';
-  const want = Boolean(agentPane && viewPreference === 'chat' && connected());
+  const want = Boolean(agentPane && viewPreference === 'chat' && (connected() || chatFirst())); // A disconnect keeps the conversation readable.
   $('view-switch').hidden = !agentPane;
   $('view-chat').setAttribute('aria-pressed', String(viewPreference === 'chat'));
   $('view-terminal').setAttribute('aria-pressed', String(viewPreference === 'terminal'));
@@ -311,17 +311,20 @@ function ack(ws, forEpoch, bytes) {
 function detach({ keepRecovery = false } = {}) {
   clearInterval(heartbeatTimer); heartbeatTimer = undefined;
   if (!keepRecovery) cancelRecovery();
-  historyReopen ||= historyOpen && !chatFirst(); setChatFirst(false); closeHistory(false); expires = 0;
+  if (chatFirst()) { chat.pause(); clearAuto(); } else { historyReopen ||= historyOpen; closeHistory(false); }
+  expires = 0;
   revision++; switchQueued = undefined; connecting = ready = false; clearAck();
   const old = socket; socket = undefined; connectionId = ''; old?.close();
   if (submission) { clearTimeout(submission.timer); submission = undefined; notify('发送结果尚未确认，草稿已保留。请查看终端后决定是否重发。'); }
   updateState('已断开');
 }
 function select(session) {
-  historyReopen ||= historyOpen && !chatFirst(); setChatFirst(false); closeHistory(false);
+  // Reconnecting to the same agent pane keeps the conversation view instead of flashing the terminal layout.
+  const keep = chatFirst() && key(session) === key(selected);
+  if (!keep) { historyReopen ||= historyOpen && !chatFirst(); setChatFirst(false); closeHistory(false); }
   if (selected) draft().text = $('draft').value;
   else if ($('draft').value) draft(session).text = $('draft').value;
-  selected = session; manualComposer = false; setMode('terminal'); $('draft').value = draft().text; fitDraft(); $('session-name').textContent = session.name;
+  selected = session; manualComposer = false; if (!keep) setMode('terminal'); $('draft').value = draft().text; fitDraft(); $('session-name').textContent = session.name;
   renderSessions(); renderAttachments();
 }
 async function connect(session, { automatic = false } = {}) {
@@ -362,6 +365,7 @@ async function connect(session, { automatic = false } = {}) {
       if (msg.epoch !== epoch) return;
       if (msg.type === 'ready') {
         expires = msg.expires; connectionId = msg.connectionId || ''; ready = true; connecting = false; updateState('已连接'); focusInput(); resize();
+        if (chatFirst()) chat.resume();
         if (historyReopen && selected?.kind !== 'ssh') openHistory(false);
         historyReopen = false; applyView();
         if (automatic) notify(uncertainSend ? '已恢复原 tmux 会话；上次图片消息结果未确认，请先核对，未自动重发。' : '已恢复原 tmux 会话，没有重发指令。');
