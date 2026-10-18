@@ -29,6 +29,7 @@ data class PendingAttachment(val id: String, val name: String, val size: Long, v
 data class ChatItem(val id: String, val role: String, val text: String, val phase: String = "", val offset: Long = 0)
 data class SkillOption(val name: String, val description: String)
 data class SavedThread(val id: String, val path: String, val created: String)
+data class CodeProject(val name: String, val git: Boolean)
 data class Question(val id: String, val title: String, val index: Int, val count: Int,
     val options: List<String>, val previous: Boolean, val next: Boolean, val freeText: Boolean)
 private class InputRejected(message: String) : Exception(message)
@@ -81,6 +82,7 @@ data class RemoteState(
     val lifecycleMode: String = "",
     val lifecyclePane: Pane? = null,
     val lifecycleThreads: List<SavedThread> = emptyList(),
+    val lifecycleProjects: List<CodeProject>? = null, // null while ~/code is still being listed.
     val lifecycleStatus: String = "",
     val lifecycleOperation: String? = null,
     val lifecycleBusy: Boolean = false,
@@ -344,6 +346,25 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
                     } else if (token == epoch) mutable.update { it.copy(lifecycleStatus = result.optString("error", "历史会话读取失败")) }
                 } catch (e: Exception) { if (token == epoch) mutable.update { it.copy(lifecycleStatus = "历史会话读取失败：${e.message.orEmpty().take(100)}") } }
             }
+        }
+        if (mode == "existing") loadProjects()
+    }
+    private fun loadProjects() {
+        val remote = client ?: return
+        val token = epoch
+        mutable.update { it.copy(lifecycleProjects = null) }
+        viewModelScope.launch {
+            try {
+                val result = withContext(Dispatchers.IO) { io.withLock {
+                    JSONObject(remote.lifecycle(JSONObject().put("action", "projects").toString()))
+                } }
+                if (token != epoch) return@launch
+                if (!result.optBoolean("ok")) throw IllegalStateException(result.optString("error", "项目列表读取失败"))
+                val array = result.getJSONArray("projects")
+                mutable.update { it.copy(lifecycleProjects = (0 until array.length()).map { i -> array.getJSONObject(i).let { p ->
+                    CodeProject(p.getString("name"), p.optBoolean("git"))
+                } }) }
+            } catch (e: Exception) { if (token == epoch) mutable.update { it.copy(lifecycleProjects = emptyList(), lifecycleStatus = "项目列表读取失败：${e.message.orEmpty().take(100)}") } }
         }
     }
     fun closeLifecycle() {

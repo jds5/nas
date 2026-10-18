@@ -87,6 +87,19 @@ def project(path, *, exists=True):
     return actual
 
 
+def projects():
+    """First-level ~/code directories the user owns, for the app's project picker; hidden entries and symlinks are skipped."""
+    root = PROJECTS.resolve(strict=True)
+    found = []
+    for entry in os.scandir(root):
+        if entry.name.startswith('.') or entry.is_symlink() or not entry.is_dir(follow_symlinks=False):
+            continue
+        if entry.stat(follow_symlinks=False).st_uid != os.getuid():
+            continue
+        found.append({'name': entry.name, 'git': os.path.isdir(os.path.join(entry.path, '.git'))})
+    return sorted(found, key=lambda item: item['name'].lower())[:300]
+
+
 def clone_name(url):
     from urllib.parse import urlsplit, unquote
     path = urlsplit(url).path if '://' in url else url.split(':', 1)[1]
@@ -584,6 +597,8 @@ def handle(req):
     action = req.get('action')
     if action == 'panes':
         return {'ok': True, 'panes': current_panes()}
+    if action == 'projects':
+        return {'ok': True, 'projects': projects()}
     if action == 'threads':
         agent = valid_agent(req.get('agent'))
         return {'ok': True, 'threads': [{k: t[k] for k in ('id', 'path', 'created')} for t in saved_threads(agent)]}

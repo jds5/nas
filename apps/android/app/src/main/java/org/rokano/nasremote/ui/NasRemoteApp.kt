@@ -40,6 +40,7 @@ import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import org.rokano.nasremote.RemoteState
 import org.rokano.nasremote.RemoteViewModel
+import org.rokano.nasremote.CodeProject
 import org.rokano.nasremote.core.*
 
 
@@ -322,8 +323,9 @@ private fun LifecycleScreen(state: RemoteState, model: RemoteViewModel) {
         }
         if (mode !in listOf("restore_pane", "new_pane", "inspect")) OutlinedTextField(session, { session = it.take(40) },
             label = { Text("tmux 名称") }, supportingText = { Text("留空使用项目名") }, singleLine = true, enabled = editable, modifier = Modifier.fillMaxWidth())
-        if (mode == "existing" || mode == "empty") OutlinedTextField(path, { path = it.take(500) },
-            label = { Text(if (mode == "existing") "已有目录（相对 ~/code）" else "新目录名（相对 ~/code）") },
+        if (mode == "existing") ProjectPicker(state.lifecycleProjects, path, editable) { path = it }
+        if (mode == "empty") OutlinedTextField(path, { path = it.take(500) },
+            label = { Text("新目录名（相对 ~/code）") },
             placeholder = { Text("work_doc") }, singleLine = true, enabled = editable, modifier = Modifier.fillMaxWidth())
         if (mode == "clone") {
             OutlinedTextField(url, { url = it.take(500) }, label = { Text("Git 仓库地址") },
@@ -339,7 +341,7 @@ private fun LifecycleScreen(state: RemoteState, model: RemoteViewModel) {
                 supportingText = { Text("默认 ${Agents.defaultArgs(state.agent)}（跳过权限确认${if (state.agent == "codex") "与沙箱" else ""}）；可删改") },
                 singleLine = true, enabled = editable, modifier = Modifier.fillMaxWidth())
             Button(onClick = { model.prepareLifecycle(session, path, thread, url, branch, pull, args) },
-                enabled = editable && (!restoring || thread.isNotEmpty()), modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text("启动 $agent") }
+                enabled = editable && (!restoring || thread.isNotEmpty()) && (mode != "existing" || path.isNotEmpty()), modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text("启动 $agent") }
         }
         if (state.lifecycleBusy) LinearProgressIndicator(Modifier.fillMaxWidth())
         if (state.lifecycleStatus.isNotBlank()) Text(state.lifecycleStatus, style = MaterialTheme.typography.bodyMedium)
@@ -347,6 +349,30 @@ private fun LifecycleScreen(state: RemoteState, model: RemoteViewModel) {
             state.lifecycleMachineStatus !in listOf("cloning", "pulling", "starting", "cloned", "pulled"))
             TextButton(onClick = model::dismissLifecycleOperation) { Text("关闭此记录") }
         Text("结果不明确时请先检查目标窗格；不会自动重试启动。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+}
+
+// Existing projects are picked from ~/code's first-level directories instead of typed by hand.
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ProjectPicker(projects: List<CodeProject>?, selected: String, enabled: Boolean, onSelect: (String) -> Unit) {
+    var expanded by remember { mutableStateOf(false) }
+    val usable = enabled && !projects.isNullOrEmpty()
+    ExposedDropdownMenuBox(expanded = expanded && usable, onExpandedChange = { if (usable) expanded = it }) {
+        OutlinedTextField(selected, {}, readOnly = true, singleLine = true, enabled = enabled,
+            label = { Text("项目（~/code）") },
+            placeholder = { Text(when { projects == null -> "正在读取项目列表…"; projects.isEmpty() -> "~/code 下没有可用目录"; else -> "选择项目" }) },
+            supportingText = { Text(projects?.firstOrNull { it.name == selected }?.let { if (it.git) "Git 仓库" else "普通目录" } ?: "只列出 ~/code 下的一级目录") },
+            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded && usable) },
+            modifier = Modifier.fillMaxWidth().menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable, usable))
+        ExposedDropdownMenu(expanded = expanded && usable, onDismissRequest = { expanded = false }) {
+            projects.orEmpty().forEach { project ->
+                DropdownMenuItem(text = { Text(project.name, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                    trailingIcon = { if (project.git) Text("Git", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant) },
+                    onClick = { onSelect(project.name); expanded = false },
+                    contentPadding = ExposedDropdownMenuDefaults.ItemContentPadding)
+            }
+        }
     }
 }
 

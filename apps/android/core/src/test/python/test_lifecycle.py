@@ -77,6 +77,17 @@ class LifecycleTests(unittest.TestCase):
             with self.assertRaises(lifecycle.Refused):
                 lifecycle.handle({'action': 'prepare', 'mode': 'clone', 'url': 'git@example.org:owner/work_doc.git'})
 
+    def test_projects_lists_owned_first_level_directories(self):
+        (self.code / 'beta' / '.git').mkdir(parents=True)
+        (self.code / 'Alpha' / 'nested').mkdir(parents=True)
+        (self.code / '.hidden').mkdir()
+        (self.code / 'notes.txt').write_text('x')
+        outside = self.root / 'outside'
+        outside.mkdir()
+        (self.code / 'link').symlink_to(outside)
+        self.assertEqual(lifecycle.handle({'action': 'projects'})['projects'],
+                         [{'name': 'Alpha', 'git': False}, {'name': 'beta', 'git': True}])
+
     @unittest.skipUnless(os.environ.get('NAS_TMUX_TESTS') == '1', 'Set NAS_TMUX_TESTS=1')
     def test_new_session_starts_once_and_resume_uses_exact_uuid(self):
         project = self.code / 'demo'
