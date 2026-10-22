@@ -9,6 +9,7 @@
 | [Claude Code 接入手机与网页终端](docs/operations/2026-10-13-Claude-Code接入手机与网页终端.md) | 两端识别 Claude Code / Codex、智能体切换（默认 Claude Code）、验证、部署与回滚 |
 | [NAS 可升级服务检查](docs/operations/2026-10-10-NAS可升级服务检查.md) | Kuma、Playwright、pgvector 与镜像构建候选，数据库生命周期和宿主机待更新包 |
 | [10 月 10 日 NAS 巡检](docs/operations/2026-10-10-NAS巡检.md) | 主机与磁盘健康、容器和入口验证、OneDrive 备份失败及业务告警 |
+| [10 月 22 日 NAS 巡检与外部攻击日志检查](docs/operations/2026-10-22-NAS巡检与外部攻击日志检查.md) | SSH 暴力尝试与 Web 扫描均被拒绝、无入侵迹象；主机健康、OneDrive 备份仍失败、IPv6 边界待验证 |
 | [Immich 与机器学习升级](docs/operations/2026-10-09-Immich与机器学习升级.md) | 3.3.1、OpenVINO / v2 优化模型、数据库恢复验证与回滚 |
 | [山路驿站下载页](docs/operations/2026-10-08-山路驿站下载页.md) | 内网只读下载页、公网入口撤下、端口与恢复 |
 | [网络安全架构](docs/architecture/家庭NAS网络安全架构.md) | 入口、网络边界、远程维护与待验收事项 |
