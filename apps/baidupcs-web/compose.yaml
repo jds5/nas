@@ -53,7 +53,7 @@ services:
       retries: 3
       start_period: 30s
   gateway:
-    image: nginx@sha256:0985e772fb9f729e6fa0980da05fca5d9c468e870eed43071545afa9d2e27d94
+    image: nginx@sha256:84ed8c0dd296c188bfc24ed506f46589e9285fb0b11cf3a04d91d524d3067e11
     user: "1000:1000"
     entrypoint: [nginx, -g, "daemon off;"]
     restart: unless-stopped
