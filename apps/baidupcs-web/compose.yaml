@@ -2,7 +2,7 @@
 name: nas-baidupcs-web
 services:
   web:
-    image: sha256:8f635868d03316141487bcc1861eb4605d02cc003f540d44adbdc0e6dcc60cce
+    image: sha256:a0254bc016599a2ba84001d0831021c20f4464847e9b244a8cfd7e623f531ed4
     pull_policy: never
     user: "1000:1000"
     restart: unless-stopped
