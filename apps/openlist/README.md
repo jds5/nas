@@ -1,6 +1,6 @@
 # OpenList 内网多网盘管理
 
-2026-10-06 部署 OpenList，2026-10-24 升级至 **v4.2.7**，内网入口 **http://192.168.50.33:5244**。用户名 `yao`，密码沿用 BaiduPCS-Rust 网页入口密码，私有记录位于 `/opt/nas/cache/openlist/private/access.txt`。这是 OpenList 自身登录，不是单点登录；两边以后改密码不会自动同步。
+2026-10-06 部署 OpenList，2026-10-28 升级至 **v4.2.9**，内网入口 **http://192.168.50.33:5244**。用户名 `yao`，密码沿用 BaiduPCS-Rust 网页入口密码，私有记录位于 `/opt/nas/cache/openlist/private/access.txt`。这是 OpenList 自身登录，不是单点登录；两边以后改密码不会自动同步。
 
 ## 使用
 
@@ -25,24 +25,26 @@ Rust 保存的百度 Cookie 无法直接替代 OpenList 的 OAuth refresh_token�
 
 ## 镜像来源与重建
 
-当前为官方源码标签 `v4.2.7`（版本命令显示提交 `3b28270`）；v4.2.6 为提交 `2bdf16d5967d0a403f67d809efd5a418b8f5bd30`。
+当前为官方源码标签 `v4.2.9`（版本命令显示提交 `0497ee8`，Go 1.27.3）；v4.2.7 为提交 `3b28270`；v4.2.6 为提交 `2bdf16d5967d0a403f67d809efd5a418b8f5bd30`。
 
-Docker Hub 下载缓慢、GHCR denied，改用 GitHub 官方 Release 的 `openlist-linux-musl-amd64.tar.gz`。v4.2.7 包 50,194,227 字节，SHA-256（与 GitHub Release 元数据一致）：
+Docker Hub 下载缓慢、GHCR denied，改用 GitHub 官方 Release 的 `openlist-linux-musl-amd64.tar.gz`。v4.2.9 包 53,475,104 字节，SHA-256（与 GitHub Release 元数据一致）：
 
 ```text
-7236d408038dfc9f9d4be9bc6f225d79c317f32e0381a55e761feb4fefb3b356
+2b96c012cfa699fb0879ce7eb8d1ac5826323c93b4ca016fd7dc8c8c157104d3
 ```
 
-发布包经已有本机代理取得，未修改系统代理配置。已核对 GitHub Release 元数据摘要和本机计算值一致。v4.2.6 包保存在 `private/openlist-proxy.tar.gz`、二进制在 `private/build/openlist`（回滚用）；v4.2.7 包在 `private/dl-4.2.7/`，二进制在 `private/build-4.2.7/openlist`。
+v4.2.7 包为 50,194,227 字节，SHA-256 `7236d408038dfc9f9d4be9bc6f225d79c317f32e0381a55e761feb4fefb3b356`。
 
-[Dockerfile](Dockerfile) 以固定摘要的 Nginx 1.30.6 Alpine 镜像作为运行基础，仅启动 OpenList；Nginx 不启动。版本命令核验后端与 Web 均为 v4.2.7。Compose 固定本次构建的 image ID，`pull_policy: never`。
+发布包经已有本机代理取得，未修改系统代理配置。已核对 GitHub Release 元数据摘要和本机计算值一致。v4.2.6 包保存在 `private/openlist-proxy.tar.gz`、二进制在 `private/build/openlist`（回滚用）；v4.2.7 包在 `private/dl-4.2.7/`，二进制在 `private/build-4.2.7/openlist`；v4.2.9 包在 `private/dl-4.2.9/`，二进制在 `private/build-4.2.9/openlist`。
+
+[Dockerfile](Dockerfile) 以固定摘要的 Nginx 1.30.6 Alpine 镜像作为运行基础，仅启动 OpenList；Nginx 不启动。版本命令核验后端与 Web 均为 v4.2.9。Compose 固定本次构建的 image ID，`pull_policy: never`。
 
 重建命令（依赖 Docker、已校验的官方 musl amd64 二进制，仅新建本地镜像）：
 
 ```bash
 docker build --network=none --pull=false \
   -f /home/yao/code/nas/apps/openlist/Dockerfile \
-  -t nas-openlist:4.2.7 /opt/nas/cache/openlist/private/build-4.2.7
+  -t nas-openlist:4.2.9 /opt/nas/cache/openlist/private/build-4.2.9
 ```
 
 重建后核对 image ID 并更新 Compose，不假设不同机器会生成相同摘要。

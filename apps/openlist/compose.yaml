@@ -2,7 +2,7 @@
 name: nas-openlist
 services:
   openlist:
-    image: sha256:65f89120042c7a180498fd72e5eb7b6e83f94a27ca6a0ed5999c77a05814e6c6
+    image: sha256:8795c8fabc24412c4880583e97e968094d13460b5e4c516204727873c7259499
     pull_policy: never
     user: "1000:1000"
     entrypoint: [/opt/openlist/openlist]

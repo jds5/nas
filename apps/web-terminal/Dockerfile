@@ -1,4 +1,4 @@
-FROM node:24-trixie-slim@sha256:8ec5d7557396cfe32d21c3f9c13072355ceab22b584578ca4bb28af31120cffe AS base
+FROM node:24-trixie-slim@sha256:89c5244bc22a9bc3287d89ebc7e49b9cb5bb84cd40e6175ac3421d5a9f68b95a AS base
 RUN apt-get update && apt-get install -y --no-install-recommends tmux ca-certificates openssh-client socat && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 
