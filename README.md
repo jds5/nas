@@ -8,6 +8,7 @@
 | --- | --- |
 | [NAS 运维巡检任务说明](docs/operations/NAS运维巡检任务说明.md) | “执行运维”时的常设流程：攻击日志、服务与定时任务、版本巡检，推荐升级 / 全量升级分级与汇报格式 |
 | [Claude Code 接入手机与网页终端](docs/operations/2026-10-13-Claude-Code接入手机与网页终端.md) | 两端识别 Claude Code / Codex、智能体切换（默认 Claude Code）、验证、部署与回滚 |
+| [10 月 28 日 NAS 巡检](docs/operations/2026-10-28-NAS巡检.md) | SSH 持续暴力尝试均被拒、无入侵；内核安全更新待重启；OneDrive 异地备份 35 天未成功且监控暂停；推荐 6 项 / 全量 17 项升级 |
 | [10 月 24 日 NAS 服务升级](docs/operations/2026-10-24-NAS服务升级.md) | 除 BaiduPCS-Rust 外全部升级：Immich 3.3.5、Jellyfin 12.3、Kuma、Seerr、Mihomo、ARR、OpenList、Nginx、Playwright 1.64.1、pgvector 0.8.7；NPM 会话票据缓解、备份与回滚 |
 | [10 月 23 日 NAS 服务升级巡检](docs/operations/2026-10-23-NAS服务升级巡检.md) | Immich 3.3.5 等安全更新、NPM OpenResty CVE 缓解、PostgreSQL 14 停止支持倒计时、宿主机 Docker 包 |
 | [NAS 可升级服务检查](docs/operations/2026-10-10-NAS可升级服务检查.md) | Kuma、Playwright、pgvector 与镜像构建候选，数据库生命周期和宿主机待更新包 |
