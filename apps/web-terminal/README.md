@@ -74,7 +74,7 @@ docker network rm nas-terminal-test
 ## 部署（按顺序）
 
 1. Cloudflare Zero Trust 创建独立 **Self-hosted** 应用，hostname 为 `rokano.org`，保护 **`/terminal` 与 `/terminal/*`**（同一应用的路径条目），覆盖首页、资源、接口和 WebSocket；不设 Bypass。Allow 精确沿用 home 的允许邮箱，使用独立 Audience，Access session duration 按身份策略配置；它控制新的 HTTP 请求和握手，不决定已建立连接的 24 小时期限。不能仅保护 `/terminal/manage/*`，也不复用 home 的 Audience。
-2. 本目录 `.env` 权限设为 `600`，填写 Team Domain、该新应用 AUD、`CF_ACCESS_ALLOWED_ORIGIN=https://rokano.org` 和精确允许邮箱。Origin **不带 `/terminal`**。UID/GID 与宿主 tmux 用户一致，socket 目录需由该用户创建，不放宽权限。
+2. 本目录 `.env` 权限设为 `600`，填写 Team Domain、该新应用 AUD、`CF_ACCESS_ALLOWED_ORIGIN=https://rokano.org` 和精确允许邮箱。Origin **不带 `/terminal`**。UID/GID 与宿主 tmux 用户一致，socket 目录需由该用户创建，不放宽权限。`/tmp` 是 tmpfs，开机后 socket 目录由 `/etc/tmpfiles.d/nas-web-terminal.conf`（`d /tmp/tmux-1000 0700 yao yao -`）在 Docker 启动前预建，否则容器因挂载源不存在而启动失败。
 3. 以 `yao` 执行 `bash deploy/setup-ssh.sh`，创建专用密钥、固定主机公钥记录及私有 socket 目录；脚本不读取 `.env` 或既有私钥。随后由宿主 tmux 用户创建 `/home/yao/.nas-web-uploads`，权限 700（可用部署变量 `UPLOAD_DIR` 指定其他专用目录；容器返回给 Codex 的宿主路径会同步使用该值）。创建 `nas-terminal-front` 网络并执行 `docker compose up -d --build`。确认拒绝未配置请求后将 NPM 加入该网络，并在 NPM 的权威 Compose 中记录 external network。应用不发布宿主端口。
 4. 备份现有 NPM `origin-home.rokano.org` Host 的配置，在其 Advanced 中合并 [终端 location 模板](deploy/nginx-advanced.conf.example)，只新增精确 `/terminal` 与 `/terminal/` 子树，指向 `nas-web-terminal:3000`，**完整保留路径前缀**。不能替换该 Host 或覆盖已有 `/home`、`/` 路由；用 NPM 生成配置后运行 `nginx -t` 并验证既有服务。
 5. 复用既有 `rokano.org` Worker 回源链路，本次不要求新建 Worker 或回源 Secret。确认该链路保留 Origin、Access JWT 和 WebSocket；本仓库 `deploy/worker.mjs` 是备用独立转发示例，当前未部署。终端授权边界是应用逐请求验证独立 Access JWT。

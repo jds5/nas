@@ -8,6 +8,7 @@
 | --- | --- |
 | [NAS 运维巡检任务说明](docs/operations/NAS运维巡检任务说明.md) | “执行运维”时的常设流程：攻击日志、服务与定时任务、版本巡检，推荐升级 / 全量升级分级与汇报格式 |
 | [Claude Code 接入手机与网页终端](docs/operations/2026-10-13-Claude-Code接入手机与网页终端.md) | 两端识别 Claude Code / Codex、智能体切换（默认 Claude Code）、验证、部署与回滚 |
+| [11 月 1 日 Kavita 密钥轮换与网页终端开机修复](docs/operations/2026-11-01-Kavita密钥轮换与网页终端开机修复.md) | 重置 Kavita 两个 API Key 并验证旧值 401；tmpfiles 开机预建 `/tmp/tmux-1000`；IPv6 直连 Jellyfin 不再跟进 |
 | [10 月 30 日遗留事项处理](docs/operations/2026-10-30-遗留事项处理.md) | 开机等待 LAN 地址再启动 Docker、删除 PG14 旧目录、用户逐项决定；移除 3 条未记录的 UFW 放行规则（含旧 IPv6 前缀全端口放行） |
 | [Google Drive 异地备份启用](docs/operations/2026-10-30-Google-Drive异地备份启用.md) | 10-30 取代 OneDrive：rclone `drive.file` 授权、30 Mbit/s 限速与每日窗口、上下行实测、首次全量上传进度、恢复注意与回滚 |
 | [10 月 29 日 NAS 巡检](docs/operations/2026-10-29-NAS巡检.md) | 升级重启后首次巡检：fail2ban 生效、无入侵；服务与备份正常；KEV 新增 Brotli CVE，推荐升级 Homeland Chromium 容器 1 项 / 全量 5 项；开机端口竞争与异地备份仍待处理 |
