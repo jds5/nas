@@ -1,0 +1,61 @@
+# 内网 GPU 主机部署 ComfyUI 与 Qwen-Image-2.1（BFS Head v1.1）
+
+时间：2026-11-02 22:20 – 23:40。目标主机 `192.168.50.20`（`yao-home`，Windows 11，RTX 5080 16 GB，32 GB 内存，驱动 621.01），不是 NAS。与 [Qwen3.8-27B 部署](2026-10-23-内网GPU主机部署Qwen3.8-27B.md)相同，从 NAS 用已授权的 SSH 密钥以 `yaoch` 登录操作；NAS 本身无改动。
+
+用户的选择：官方 Windows 便携版（不用 Docker），只监听本机 `127.0.0.1:8188`，不改防火墙。
+
+## 组件与版本
+
+| 组件 | 版本 / 文件 | 来源与校验 |
+| --- | --- | --- |
+| ComfyUI | v0.43.0 `ComfyUI_windows_portable_nvidia.7z`（Python 3.13.14、PyTorch 2.14.1+cu130，识别 RTX 5080 为 sm_120） | GitHub 官方发布包，SHA-256 `4928f88e…98955e50` 与 GitHub 记录一致 |
+| 主模型 | `qwen_image_2.1_int8_convrot.safetensors`（7.26 GB） | `Comfy-Org/Qwen-Image-2.1` 提交 `aacf31a6`，许可 qwen-research |
+| 文本编码器 | `qwen3vl_8b_int8_convrot.safetensors`（9.35 GB） | 同上 |
+| VAE | `qwen_image_2.1_vae_bf16.safetensors`（0.68 GB） | 同上 |
+| 8 步加速 LoRA | `p_q_image_2.1_8_steps_v0.1_comfyui_bf16.safetensors`（0.34 GB） | 同上 |
+| BFS Head v1.1 | `bfs_head_v1.1_qwen_2.1.safetensors`（推荐，0.26 GB）、`bfs_head_v1.1_alternative_qwen_2.1.safetensors`（表情迁移更强，0.32 GB） | `Alissonerdx/BFS-Best-Face-Swap` 提交 `0ca3913a`，MIT |
+| 自定义节点 | ComfyUI-KJNodes `ab72eda7`、rgthree-comfy `bc48c6aa`、RES4LYF `057a913e`（工作流的 `deis_2m` 采样器需要它） | GitHub，固定提交 |
+
+模型都按 Hugging Face 记录的 SHA-256 核对。选用的文件与 BFS 作者官方工作流 `Head Swap V1 Qwen 2.1 Workflow.json` 一致。
+
+## 部署
+
+- 目录 `C:\llm\comfyui\`，共约 23.5 GB：
+  - `ComfyUI_windows_portable\`：程序与模型。
+  - `downloads\`：保留 2 GB 便携版安装包，可删除。
+  - `workflows\`：BFS 原始工作流。
+  - `comfy-download.ps1`、`comfy-install.ps1`：可重复执行的下载、校验与安装脚本。
+  - `runjob.ps1`：API 测试脚本。
+- 工作流：已导入 ComfyUI 的工作流列表，名为「BFS Head v1.1 - Qwen Image 2.1」。原文件中加速 LoRA 写作 `p_qwen_image_2.1_8step_v0.1.safetensors`，已改为 Comfy-Org 仓库里的同一 LoRA 文件名，其余未改。
+- 启动：双击 `C:\llm\comfyui\start-comfyui.cmd`，会打开浏览器到 `http://127.0.0.1:8188`。不随开机自启，不开放局域网。
+- 节点依赖：Python 依赖用清华 PyPI 镜像安装，GPU 主机直连 PyPI 超时。`pip check` 只缺 3 个工作流模板的示例素材包，不影响使用。KJNodes 中的 `PatchTritonVAE` 节点需要 Triton，加载失败，本工作流不用它。
+
+## 遇到的问题
+
+- **GitHub 下载慢**：发布包直连约 60 KB/s，经 NAS Mihomo 只有 12–300 KB/s，gh-proxy、阿里云 PyTorch 镜像约 0.4–0.5 MB/s。最终改用 yao-home 本机的系统代理 v2rayN（`127.0.0.1:10808`），约 1.5 MB/s，9 分钟下完，并按官方 SHA-256 校验。节点 git 拉取也走这个代理。以后升级 ComfyUI 或节点，同样需要它开着。Hugging Face 直连约 13 MB/s，模型 10 分钟下完。
+- **日志编码崩溃**：输出重定向到文件时，Python 使用中文 Windows 的 GBK 编码，节点日志中的 emoji 导致 ComfyUI 退出。启动脚本已设置 `PYTHONUTF8=1`。
+
+## 验证
+
+测试全部使用 Qwen-Image-2.1 生成的虚构人物，不涉及真人：
+
+| 任务 | 结果 | 耗时 | 显存峰值（整卡） |
+| --- | --- | --- | --- |
+| 文生图 1024×1024，8 步，`deis_2m`（首次，含加载模型） | 成功 | 38.6 s | 15.8 GB |
+| 文生图（模型已加载） | 成功 | 17.2 s | 15.1 GB |
+| BFS Head v1.1 换头（image1 为身体，image2 为头部参考，8 步） | 成功 | 29.9 s | 15.5 GB |
+
+换头结果：头部和发型、胡须、眼睛颜色来自参考图；头部角度、衣服和咖啡馆背景保留了原图。皮肤纹理偏锐，与 BFS 作者说明的 Qwen 2.1 画面整体变化一致，作者建议生成 2K 来缓解。
+
+**测试时 Qwen3.8 容器也在运行**：用户约 22:45 打开了 Docker Desktop，`qwen38-27b` 占用约 11 GB 显存。ComfyUI 的动态显存管理把部分模型放到内存，仍然能完成，所以上表耗时是两者同时运行的数据。单独运行时应该更快，未测。测试实例已停止，`127.0.0.1:8188` 不再监听；Qwen3.8 保持原状。
+
+## 注意
+
+- **显存**：和 Qwen3.8 同时运行能出图，但会变慢，也挤占桌面程序的显存。要稳定、快速出图时，先停 Qwen3.8：`docker compose -f C:\llm\qwen38\compose.yaml stop`。
+- **使用规范**：BFS 模型说明要求，不对公众人物或未同意的人使用、分享换头结果。
+- **未验证**：浏览器界面中的完整工作流（两张图片调整尺寸、对比图等 KJNodes / rgthree 节点）只核对了节点能加载，没有在界面里点击运行；2K 输出；单独运行时的速度。
+
+## 回滚 / 卸载
+
+- 停止：关闭 `start-comfyui.cmd` 打开的窗口。
+- 卸载：删除 `C:\llm\comfyui`（约 23.5 GB）。没有安装服务、计划任务、防火墙规则或系统级 Python，不影响 Qwen3.8 和 Docker。
