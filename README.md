@@ -21,6 +21,8 @@
 | [NAS 可升级服务检查](docs/operations/2026-10-10-NAS可升级服务检查.md) | Kuma、Playwright、pgvector 与镜像构建候选，数据库生命周期和宿主机待更新包 |
 | [10 月 10 日 NAS 巡检](docs/operations/2026-10-10-NAS巡检.md) | 主机与磁盘健康、容器和入口验证、OneDrive 备份失败及业务告警 |
 | [10 月 22 日 NAS 巡检与外部攻击日志检查](docs/operations/2026-10-22-NAS巡检与外部攻击日志检查.md) | SSH 暴力尝试与 Web 扫描均被拒绝、无入侵迹象；主机健康、OneDrive 备份仍失败、IPv6 边界待验证 |
+| [电视 Jellyfin 灯带同步](tv-ambilight/README.md) | 待执行（物料已备）：LG G5 + Litefin + WLED，NAS 预计算取色插件需适配 Jellyfin 12.4，方案评估结论与分阶段步骤 |
+| [Surface Pro 5 安装 macOS](surface-macos/README.md) | 进行中（等待硬件）：目标 macOS 26 Tahoe、硬件预期、物料下载脚本与校验清单、分阶段步骤与回滚 |
 | [内网 GPU 主机部署 ComfyUI 与 Qwen-Image-2.1](docs/operations/2026-11-02-内网GPU主机部署ComfyUI与Qwen-Image-2.1.md) | 192.168.50.20 上 ComfyUI 0.43.0 便携版 + Qwen-Image-2.1 int8 + BFS Head v1.1 换头 LoRA，文生图 17 s / 换头 30 s，仅本机访问 |
 | [内网 GPU 主机部署 Qwen3.8-27B](docs/operations/2026-10-23-内网GPU主机部署Qwen3.8-27B.md) | 192.168.50.20 上 llama.cpp CUDA 13 + 4-bit GGUF，全 GPU 与 MTP 调优，66–100 tok/s，仅本机访问 |
 | [Immich 与机器学习升级](docs/operations/2026-10-09-Immich与机器学习升级.md) | 3.3.1、OpenVINO / v2 优化模型、数据库恢复验证与回滚 |

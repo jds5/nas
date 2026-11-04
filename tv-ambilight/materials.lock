@@ -1,0 +1,7 @@
+# 电视灯带物料清单，生成于 2026-11-05 00:01:46 CST，目录 /home/yao/tv-ambilight-materials
+55eb54061ac8694a4d1535dd3497d6b68965a697e73dc9b32b9dda46a5df63ac  release/jellyfin-plugin-ambilight_2.5.0.zip  gabrielprat/jellyfin-ambilight@v2.5.0  github-digest-ok
+0e8945639a1ee00cbd60ccd497ce1462b907ce3fea82f88cf883ac3fb46550c9  release/Litefin-2.0.20-webOS-Normal.ipk  MoazSalem/litefin@v2.0.20  github-digest-ok
+628917b0753edcfc9a8408e6387c6d1ace6a360d315441e9563d60299fef8594  firmware/WLED_16.0.1_ESP32.bin  wled/WLED@v16.0.1  github-digest-ok
+3f11dcb89a997112229e73aa4b2be24dc3ef4f22c6ad6d88e0cee32473a630a0  src/jellyfin-ambilight-c3ecb751c222449b5b898899ef6b8d92cc062637.tar.gz  gabrielprat/jellyfin-ambilight@c3ecb751c222449b5b898899ef6b8d92cc062637  codeload
+bdd1770dbd075e29fa120eef0c7d35695759efe81970e954a61f936655c8274b  src/litefin-aa8709bfe2d3f3b4cde262930cf8d3302e912bef.tar.gz  MoazSalem/litefin@aa8709bfe2d3f3b4cde262930cf8d3302e912bef  codeload
+image mcr.microsoft.com/dotnet/sdk@sha256:de4fe90a98845d75910b9769662465c84de1a934665c431279d1382b2bddc02b

@@ -1,0 +1,21 @@
+# Surface Pro 5 macOS 物料清单，生成于 2026-11-05 00:55:23 CST，目录 /home/yao/surface-macos-materials
+2011e8b7216ecb2645d97ea710df965947edd406846e92050b9bc4190be6d27b  opencore/OpenCore-1.0.8-RELEASE.zip  acidanthera/OpenCorePkg@1.0.8  github-digest-ok
+3f5f42b85703cf2c08e8dcd9245a52fb4326c9f4ef335c75b49f516cbbe131c6  opencore/OpenCore-1.0.8-DEBUG.zip  acidanthera/OpenCorePkg@1.0.8  github-digest-ok
+53967d7dcfaab01023a33df2e969a89522f13d6654a6a56ac4711b62dabf3ab8  kexts/Lilu-1.7.2-RELEASE.zip  acidanthera/Lilu@1.7.2  github-digest-ok
+2e29a8aaf91b4eb0bcdf5913ed17e70f5cf76531122acd4132eff7813a54de8b  kexts/VirtualSMC-1.3.8-RELEASE.zip  acidanthera/VirtualSMC@1.3.8  github-digest-ok
+1bfdd2d40290ecce237606db121cbc01d7041179f03394bd59660a2ed52e5c95  kexts/WhateverGreen-1.7.1-RELEASE.zip  acidanthera/WhateverGreen@1.7.1  github-digest-ok
+d4d36cd2da7863cf7cbfcb0892d45c08457f4f4ddd065a073dd010e46bd63bcb  kexts/AppleALC-1.9.8-RELEASE.zip  acidanthera/AppleALC@1.9.8  github-digest-ok
+e1d5657ab7ac31f69771708f7b80bf218ab9aa0b8e4c4fe6ff943983037e3dfb  kexts/NVMeFix-1.1.3-RELEASE.zip  acidanthera/NVMeFix@1.1.3  github-digest-ok
+98170dfae195ddd28b5d95e3f040125a13ca783bcb9bd1e5b8c588e217b14ee6  kexts/RestrictEvents-1.1.6-RELEASE.zip  acidanthera/RestrictEvents@1.1.6  github-digest-ok
+c315a3a5acfd496dd97d0d19b4fbd1d487103d2fd541c5651583d4c9cebcfe07  kexts/USBToolBox-1.2.0-RELEASE.zip  USBToolBox/kext@1.2.0  github-digest-ok
+e3c6ea71133b9fef26a85b9184361f0cc08a25775115ddd7a3638a361616a4c3  kexts/BigSurface.zip  Xiashangning/BigSurface@v6.5  github-no-digest
+8e439b56604f8b6c616511960f7afdcd9e2f20679f3804faaae102bef70868d6  tools/IPTSDaemon.zip  Xiashangning/IPTSDaemon@v1.4  github-no-digest
+15f5c6cbe14e5c0f11bf27172dfbcdf3b753122d128807d6bad94c8f4c2b71e1  kexts/HoRNDIS-9.2.pkg  jwise/HoRNDIS@rel9.2  github-no-digest
+b528378e4d383b1ac7aa796f22245221343a4ca9ae03443b8bce80c90eaea8af  tools/Windows.zip  USBToolBox/tool@0.2  github-no-digest
+0a604e738b83ca36a7392cad20e329057033122261db9dc4d8e9135fc5d8430c  oclp/OpenCore-Patcher.pkg  dortania/OpenCore-Legacy-Patcher@3.0.0-rc.5  github-digest-ok
+e129f384f4bf8a9355fdbffea5df880ce8365bdad654ec5bb150475fdfca3202  tools/SSDTTime-d0fc80fb82e2488f3f481225221d2df356e94da6.tar.gz  corpnewt/SSDTTime@d0fc80fb82e2488f3f481225221d2df356e94da6  codeload
+de9c2687f0eb9527339548d4456dc06fb8434f5de2172a42c5ee985ea70de8ee  tools/ProperTree-51ed53dbe3c96a81686ae1fc47f6d2a92f668159.tar.gz  corpnewt/ProperTree@51ed53dbe3c96a81686ae1fc47f6d2a92f668159  codeload
+35fde6815b749f18a571ace1ba39faf3f8c92ec3ec747fbb784894c55ecffcd5  tools/GenSMBIOS-9a446983ec0c6b0fb690dc1cae76c314756a43ee.tar.gz  corpnewt/GenSMBIOS@9a446983ec0c6b0fb690dc1cae76c314756a43ee  codeload
+ce72eaed84a460be0b55aea9211014654c3243e9ddc018d1b30d4f9212afce4b  reference/OpenCore-EFI-Surface-Pro-5-2017--bfbd43d7c30397e3bf020d9ee17e0e2f2d60b876.tar.gz  Alfie-sketch/OpenCore-EFI-Surface-Pro-5-2017-@bfbd43d7c30397e3bf020d9ee17e0e2f2d60b876  codeload
+06f7c498f856341f467ba1faedf2717fb2c172ae0aff4658a1467cbf46b711f9  recovery/com.apple.recovery.boot/BaseSystem.chunklist  apple-macrecovery(chunklist-verified)
+edddd0d5869caaa12e29e6996a04f11590280580976a119dbd42c24fa62fe18e  recovery/com.apple.recovery.boot/BaseSystem.dmg  apple-macrecovery(chunklist-verified)
