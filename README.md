@@ -12,6 +12,7 @@
 | [10 月 30 日遗留事项处理](docs/operations/2026-10-30-遗留事项处理.md) | 开机等待 LAN 地址再启动 Docker、删除 PG14 旧目录、用户逐项决定；移除 3 条未记录的 UFW 放行规则（含旧 IPv6 前缀全端口放行） |
 | [Google Drive 异地备份启用](docs/operations/2026-10-30-Google-Drive异地备份启用.md) | 10-30 取代 OneDrive：rclone `drive.file` 授权、30 Mbit/s 限速与每日窗口、上下行实测；11-04 首次全量上传完成、云端恢复验证通过（抽样 10/10、10 GiB 抽检），云端下载慢只适合挑选恢复；回滚 |
 | [11 月 1 日 Homeland 浏览器容器升级](docs/operations/2026-11-01-Homeland浏览器容器升级.md) | 选项 A：jlesage/chromium 26.10.1（Chromium 155、brotli 1.2.1-r0），修复 KEV 在野利用的 Brotli CVE-2026-111497；备份与回滚 |
+| [11 月 6 日 NAS 巡检](docs/operations/2026-11-06-NAS巡检.md) | 无入侵；CVE-2026-123158（OpenSSH musl 密码绕过）不影响本机；Byparr 已自愈、异地备份可用；新内核 6.12.115 待重启，推荐升级 3 项（重启 + Docker 29.9.3 + Immich 3.3.6 关闭遥测）/ 全量 12 项 |
 | [11 月 1 日 NAS 巡检](docs/operations/2026-11-01-NAS巡检.md) | 无入侵；Byparr 健康检查超时待重启；备份链正常、Google Drive 首次上传约 46%；推荐升级仍为 Homeland Chromium 1 项 / 全量 9 项（新增 Kuma 2.5.9 中危修复等）；两个新外网客户端来源待确认 |
 | [10 月 29 日 NAS 巡检](docs/operations/2026-10-29-NAS巡检.md) | 升级重启后首次巡检：fail2ban 生效、无入侵；服务与备份正常；KEV 新增 Brotli CVE，推荐升级 Homeland Chromium 容器 1 项 / 全量 5 项；开机端口竞争与异地备份仍待处理 |
 | [10 月 28 日推荐升级与问题处理](docs/operations/2026-10-28-NAS推荐升级与问题处理.md) | 推荐 + 全量升级：OpenList 4.2.9、Immich 数据库迁至 PG17.11、Jellyfin 12.4、Node 24（网页终端 / Homeland / Stock）、Kuma、Valkey、Redis、ARR、BaiduPCS-Rust 2.3.3、Docker 29.9.2；fail2ban 启用；OneDrive 同步停用；误删 3 个匿名卷 |
