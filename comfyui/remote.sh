@@ -14,7 +14,7 @@ TASK=ComfyUI-start-once
 run() { timeout "${2:-60}" ssh -o BatchMode=yes -o ConnectTimeout=8 "$HOST" "$1" 2>&1 | iconv -f GBK -t UTF-8 -c; }
 # PowerShell 经 cmd 传参容易被转义打乱，统一用 -EncodedCommand（UTF-16LE base64）。
 ps() { run "powershell -NoProfile -NonInteractive -EncodedCommand $(printf '%s' "\$ProgressPreference='SilentlyContinue'; $1" | iconv -f UTF-8 -t UTF-16LE | base64 -w0)" "${2:-60}"; }
-listening() { ps '(Get-NetTCPConnection -LocalPort 8188 -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1).OwningProcess' | grep -o '^[0-9]*' | head -1; }
+listening() { ps '(Get-NetTCPConnection -LocalPort 8188 -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1).OwningProcess' | grep -o '^[0-9]*' | head -1 || true; }
 
 case "${1:-status}" in
   start)

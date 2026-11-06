@@ -14,7 +14,23 @@
 | 工作流 | 「BFS Head v1.1 - Qwen Image 2.1」（已导入 ComfyUI 工作流列表） |
 | 访问 | 只监听 `127.0.0.1:8188`，只能在 GPU 主机本机浏览器使用；未开放局域网，未改防火墙 |
 | 启动方式 | 不随开机自启；需要时启动，用完关闭 |
-| 最近一次启动 | 2026-11-06 20:20，用户要求处理图片 |
+| 运行状态 | 已停止（2026-11-06 20:20 按用户要求启动，用户用完后约 22:50 用 `remote.sh stop` 关闭） |
+
+## 技术栈
+
+| 层次 | 组件 | 说明 |
+| --- | --- | --- |
+| 硬件 | RTX 5080 16 GB（Blackwell，sm_120）、32 GB 内存 | 显存不足时 ComfyUI 自动把部分模型放到内存 |
+| 系统与驱动 | Windows 11、NVIDIA 驱动 621.01 | 直接运行在 Windows 上，**不用 Docker / WSL**（部署时用户选定） |
+| 运行环境 | ComfyUI 官方 Windows 便携版自带的嵌入式 Python 3.13.14、PyTorch 2.14.1+cu130（CUDA 13.0） | 不依赖系统 Python，整个目录可直接删除 |
+| 推理框架 | ComfyUI v0.43.0（节点式工作流，网页界面 + HTTP API，`127.0.0.1:8188`） | 启动参数见 `gpu-host/start-comfyui.cmd` |
+| 自定义节点 | ComfyUI-KJNodes、rgthree-comfy、RES4LYF（提供 `deis_2m` 采样器） | 固定提交，见“当前状态” |
+| 图像模型 | Qwen-Image-2.1（扩散模型，int8 量化）+ Qwen3-VL-8B（文本 / 图像编码器，int8）+ Qwen-Image-2.1 VAE（bf16） | Comfy-Org 重新打包版本，许可 qwen-research |
+| LoRA | 8 步加速 LoRA；BFS Head v1.1（换头，推荐版 / alternative 版） | BFS 为 MIT 许可 |
+| 远程管理 | NAS → SSH 密钥（`yaoch`）→ PowerShell；启动用一次性计划任务 `/IT` 进入桌面会话 | `remote.sh` |
+| 网络 | 下载 / 更新经主机 v2rayN 代理；Hugging Face 直连；PyPI 清华镜像 | 见“更新与调整” |
+
+同机的 Qwen3.8-27B 是另一套对话模型（Docker Desktop + llama.cpp），与本服务无关，只共用显卡。
 
 ## 使用
 
@@ -28,7 +44,7 @@ bash /home/yao/code/nas/comfyui/remote.sh stop
 
 - `start` 通过一次性计划任务在用户桌面会话中运行 `start-comfyui.cmd`，启动窗口和浏览器出现在 GPU 主机屏幕上，SSH 断开不影响；监听后删除任务。不要在 SSH 会话里直接运行启动脚本，断开时会被结束。
 - 在 GPU 主机本机也可以直接双击 `C:\llm\comfyui\start-comfyui.cmd`；关闭它打开的命令行窗口即停止。
-- `stop` 结束监听 8188 的进程以及它的启动窗口。**尚未实测**（编写时用户正在使用，没有中断）；第一次使用时核对。
+- `stop` 结束监听 8188 的进程以及它的启动窗口；2026-11-06 实测正常，无残留 python / 启动窗口。
 
 ### 换头工作流
 
@@ -80,7 +96,7 @@ bash /home/yao/code/nas/comfyui/remote.sh stop
 ## 未验证
 
 - 浏览器界面中完整运行工作流（两张图片调整尺寸、对比图等节点）——用户 11-06 开始实际使用，结果待补充。
-- 2K 输出；单独运行（无 Qwen3.8）时的速度；`remote.sh stop`。
+- 2K 输出；单独运行（无 Qwen3.8）时的速度。
 
 ## 卸载
 
@@ -92,3 +108,4 @@ bash /home/yao/code/nas/comfyui/remote.sh stop
 | --- | --- |
 | 2026-11-02 | 部署 ComfyUI 0.43.0、Qwen-Image-2.1、BFS Head v1.1，测试文生图与换头，见[部署记录](2026-11-02-部署记录.md) |
 | 2026-11-06 | 按用户要求远程启动；建立本目录，取回主机脚本与工作流，新增 `remote.sh` |
+| 2026-11-06 | 用户用完后 `remote.sh stop` 关闭（首次实测通过）；修复未运行时 `status` / `stop` 无输出退出（`pipefail` 下 grep 无匹配）；新增“技术栈” |
