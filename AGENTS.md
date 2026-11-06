@@ -12,6 +12,8 @@
 - 来源与未迁移内容见 `docs/migration/README.md`。Homeland 应用代码仍归原项目，生产配置仍需从 NAS / nas-config 核对，不用历史代码片段冒充可部署配置。
 - 实施“公开读、登录写”的实验 Web 项目时，阅读统一手册 `docs/security/CLOUDFLARE_ACCESS_IMPLEMENTATION.md`，按其中适用范围执行鉴权与验收，不另建重复规则文档。
 - 用户要求“执行运维”“巡检”或类似任务时，先阅读并遵循 [NAS 运维巡检任务说明](docs/operations/NAS运维巡检任务说明.md)：检查安全日志（是否被攻击）、主机与服务、定时任务和备份链、宿主机软件与服务版本，然后汇报“推荐升级”和“全量升级”两个选项。严重 CVE、公网服务安全修复、重大更新和停止支持归入推荐升级；不关键的小更新只在全量升级时执行。巡检只读，用户选定选项后才升级。
+- 本项目也承担 NAS 相关杂务。跨多轮对话、分阶段实施或需等待硬件 / 用户决定的较长任务，必须建立独立目录管理（应用放 `apps/<名称>/`，其他杂务放仓库根目录 `<名称>/`），目录内 `README.md` 记录目标、方案、当前进度、未决事项和下一步，每次推进后同步更新并提交；同时在本文件登记“待续事项”入口，任务完成后移除登记。不依赖聊天记录保存任务状态。
+- **待续事项：临时文件中转站**（2026-11-06 起，方案待用户确认）。用户提到文件中转、临时传文件、电脑传手机或 file-drop 时，先阅读 [apps/file-drop/README.md](apps/file-drop/README.md) 的“当前进度”“未决事项”和“下一步”，按其中阶段继续，进展同步更新该文件。开放公网入口前必须完成 Access 手册的验收。
 - **待续事项：Surface Pro 5 安装 macOS**（2026-11-04 起，等待硬件到货）。用户提到 Surface、黑苹果或"硬件到了"时，先阅读 [surface-macos/README.md](surface-macos/README.md) 的“当前进度”“未决事项”和“下一步”，按其中阶段继续，进展同步更新该文件。物料在 NAS `/home/yao/surface-macos-materials/`，不入 Git；整盘清除 Windows 前必须再次取得用户授权。
 - **待续事项：电视 Jellyfin 灯带同步**（2026-11-04 起，只准备物料、未执行）。用户提到电视灯带、氛围灯、WLED 或 ambilight 时，先阅读 [tv-ambilight/README.md](tv-ambilight/README.md) 的“当前进度”和“下一步”，按其中阶段继续，进展同步更新该文件。物料在 NAS `/home/yao/tv-ambilight-materials/`，不入 Git；插件先在隔离测试实例验证，装入正式 Jellyfin 需用户决定。
 - 将网盘或其他独立下载器的剧集导入 Sonarr / Jellyfin 时，先阅读并遵循 [剧集手动导入流程](docs/operations/剧集手动导入Sonarr与Jellyfin.md)，现场核对剧集身份、完成状态、季集映射与挂载；默认复制保留原件，删除或覆盖另行确认授权。
