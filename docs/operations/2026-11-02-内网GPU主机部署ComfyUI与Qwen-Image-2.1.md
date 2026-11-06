@@ -55,6 +55,18 @@
 - **使用规范**：BFS 模型说明要求，不对公众人物或未同意的人使用、分享换头结果。
 - **未验证**：浏览器界面中的完整工作流（两张图片调整尺寸、对比图等 KJNodes / rgthree 节点）只核对了节点能加载，没有在界面里点击运行；2K 输出；单独运行时的速度。
 
+## 远程启动方法
+
+用户已登录桌面时，从 NAS 经 SSH 建一次性计划任务，在用户的桌面会话里运行启动脚本，窗口和浏览器出现在用户桌面上；启动后删除任务：
+
+```bat
+schtasks /Create /TN ComfyUI-start-once /TR "C:\llm\comfyui\start-comfyui.cmd" /SC ONCE /ST 23:59 /IT /RL LIMITED /F
+schtasks /Run /TN ComfyUI-start-once
+schtasks /Delete /TN ComfyUI-start-once /F
+```
+
+直接在 SSH 会话里运行会在断开时被结束，不要这样启动。2026-11-06 20:20 按用户要求用此法启动：约 30 秒后 `127.0.0.1:8188` 开始监听，`/system_stats` 正常（ComfyUI 0.43.0）；当时 Qwen3.8 容器未运行，显卡空闲约 13.6 GB。
+
 ## 回滚 / 卸载
 
 - 停止：关闭 `start-comfyui.cmd` 打开的窗口。
