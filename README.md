@@ -12,7 +12,7 @@
 | [10 月 30 日遗留事项处理](docs/operations/2026-10-30-遗留事项处理.md) | 开机等待 LAN 地址再启动 Docker、删除 PG14 旧目录、用户逐项决定；移除 3 条未记录的 UFW 放行规则（含旧 IPv6 前缀全端口放行） |
 | [Google Drive 异地备份启用](docs/operations/2026-10-30-Google-Drive异地备份启用.md) | 10-30 取代 OneDrive：rclone `drive.file` 授权、30 Mbit/s 限速与每日窗口、上下行实测；11-04 首次全量上传完成、云端恢复验证通过（抽样 10/10、10 GiB 抽检），云端下载慢只适合挑选恢复；回滚 |
 | [11 月 1 日 Homeland 浏览器容器升级](docs/operations/2026-11-01-Homeland浏览器容器升级.md) | 选项 A：jlesage/chromium 26.10.1（Chromium 155、brotli 1.2.1-r0），修复 KEV 在野利用的 Brotli CVE-2026-111497；备份与回滚 |
-| [11 月 6 日临时文件中转站部署](docs/operations/2026-11-06-临时文件中转站部署.md) | `drop.rokano.org`（Access）+ `dl.rokano.org:8443`（令牌直连）；专用用户、出站防火墙、NPM 两个 Host；匿名与源站绕过验收通过，待真实登录验收 |
+| [11 月 6 日临时文件中转站部署](docs/operations/2026-11-06-临时文件中转站部署.md) | `drop.rokano.org`（Access）+ `dl.rokano.org:8443`（令牌直连）；专用用户、出站防火墙、NPM 两个 Host；匿名与源站绕过验收通过；用户实测完成；安全复审与新 IP 告警 |
 | [11 月 6 日 NAS 巡检](docs/operations/2026-11-06-NAS巡检.md) | 无入侵；CVE-2026-123158（OpenSSH musl 密码绕过）不影响本机；Byparr 已自愈、异地备份可用；新内核 6.12.115 待重启，推荐升级 3 项（重启 + Docker 29.9.3 + Immich 3.3.6 关闭遥测）/ 全量 12 项 |
 | [11 月 1 日 NAS 巡检](docs/operations/2026-11-01-NAS巡检.md) | 无入侵；Byparr 健康检查超时待重启；备份链正常、Google Drive 首次上传约 46%；推荐升级仍为 Homeland Chromium 1 项 / 全量 9 项（新增 Kuma 2.5.9 中危修复等）；两个新外网客户端来源待确认 |
 | [10 月 29 日 NAS 巡检](docs/operations/2026-10-29-NAS巡检.md) | 升级重启后首次巡检：fail2ban 生效、无入侵；服务与备份正常；KEV 新增 Brotli CVE，推荐升级 Homeland Chromium 容器 1 项 / 全量 5 项；开机端口竞争与异地备份仍待处理 |
@@ -59,7 +59,7 @@
 | [网页终端安全审查](docs/security/WEB_TERMINAL_SECURITY_REVIEW.md) | 同域风险、NAS 权限边界、撤销与剩余风险 |
 | [网页终端 24 小时连接](docs/operations/2026-10-07-网页终端24小时连接.md) | 服务端固定连接期限、心跳容错、JWT 边界与部署回滚 |
 | [网页终端断连优化](docs/operations/2026-10-07-网页终端断连排查与优化.md) | 应用心跳、输出流控、有限自动重连、关闭诊断与回滚 |
-| [临时文件中转站](apps/file-drop/README.md) | 外出时电脑与手机互传文件：整站 Access + 应用验签、只上传下载不渲染、12 小时自动删除；文件数据走灰云直连；11-06 已部署，等待真实登录验收 |
+| [临时文件中转站](apps/file-drop/README.md) | 外出时电脑与手机互传文件：整站 Access + 应用验签、只上传下载不渲染、12 小时自动删除；文件数据走灰云直连；11-06 已上线并通过用户实测；新 IP 告警推送 Kuma |
 | [NAS 网页终端](apps/web-terminal/README.md) | 整站 Access 保护的 tmux / 临时 SSH、Claude Code / Codex Markdown 对话与部署验证 |
 | [网页终端实施记录](docs/operations/2026-09-29-NAS网页终端.md) | 内部部署、真实 PTY 与浏览器测试、待完成的公网配置 |
 | [手机外网连接与 SSH 配置](docs/operations/手机外网连接与SSH密钥配置.md) | 本机连接信息、手机专用密钥、公网入口与 key-only 步骤 |
