@@ -10,7 +10,9 @@
 - [x] 第 1 阶段（11-06）：代码、Docker、10 项自动化测试与浏览器验收全部通过，见“构建与测试”
 - [x] 第 2 阶段（11-06）：用户 `filedrop`、目录、出站防火墙、容器、NPM 限速；未登录全部拒绝
 - [x] 第 3 阶段（11-06）：用户完成 Cloudflare DNS / Origin Rule / Access；NPM 新增 Host 9（drop）、10（dl）；匿名与源站绕过验收通过，见 [部署记录](../../docs/operations/2026-11-06-临时文件中转站部署.md)
-- [ ] 第 4 阶段：**等待用户真实登录验收**（电脑上传、手机下载）；之后视需要补 Kuma 告警
+- [x] 安全复审（11-06，0.2.0）：修复 IP 可伪造、审计日志随容器重建丢失、空 JSON 请求体 500，见“安全复审”
+- [ ] 新 IP 告警：应用侧已上线（0.2.0），**等待用户在 Kuma 建 Push 监控并提供地址、临时 sudo** 以安装推送脚本
+- [ ] 第 4 阶段：真实登录验收。11-06 19:56 已有一次 72.8 MB 上传完成（Access 身份为允许邮箱，来源 132.145.115.29 / JP，待用户确认是本人经代理的测试）；手机下载待确认
 
 ## 架构
 
@@ -178,9 +180,29 @@ dl.rokano.org:8443（灰云，直连家庭 IP，复用 NPM 现有 *.rokano.org �
 
 接口（页面端，全部要求 Access JWT）：`GET /api/files`；`POST /api/uploads`（新建上传，返回令牌）；`POST /api/uploads/<id>/token`（续签并返回已收字节）；`POST /api/files/<id>/link`（5 分钟下载地址）；`DELETE /api/files/<id>`。直连端：`PUT /u/<id>?offset=N`（头 `X-Drop-Token`，每片 ≤ 32 MiB）、`GET/HEAD /d/<id>/<文件名>?t=令牌`（支持 Range）。
 
-审计日志输出到容器 stdout（`docker logs nas_file_drop`）：上传开始 / 完成、生成下载链接、下载、删除、到期清理，以及直连端被拒请求（方法、去掉查询串的路径、原因、IP），不含 JWT 与令牌。
+审计日志写入 `/mnt/pool-main/drop/audit.jsonl`（超过 10 MiB 轮换为 `.1`，容器重建不丢失），同时输出到容器 stdout：上传开始 / 完成、生成下载链接、下载、删除、到期清理，以及直连端被拒请求（方法、去掉查询串的路径、原因、IP），不含 JWT 与令牌。
 
-未实现：新 IP / 境外上传的 Kuma 告警（列表已显示上传来源 IP 与国家），上线后视需要补充。
+## 新 IP 告警
+
+- 应用（`server/alerts.mjs`）记录见过的来源 IP：已登录的页面请求取 `CF-Connecting-IP`，持有效令牌的直连上传 / 下载取 NPM 传入的 TCP 真实来源。IPv4 按单个地址、IPv6 按 /64 归并；90 天未出现会被遗忘。首次出现时在 `/data/alerts/` 写一个事件文件，记录 `known-ips.json`。被拒绝的请求不计入，扫描器不会触发告警。
+- 宿主机 root crontab 每分钟运行 `/opt/nas/scripts/file-drop-alert-push.sh`（源 `deploy/alert-push.sh`）：有事件就向 Kuma Push 监控推送 down，消息包含 IP、国家、通道 / 动作、邮箱，推送后删除事件文件；没有事件且容器 healthy 就推送 up。所以每次告警之后约 1 分钟会再收到一条“恢复”，属预期。容器不健康也会推送 down。应用本身不访问 Kuma，出站限制不变。
+- Kuma 监控：类型 Push，名称 `file-drop`，心跳间隔 300 秒，重试 0 次，通知沿用现有渠道。地址写入 root 的 `/opt/nas/scripts/uptime-kuma-urls.sh`，变量名 `UPTIME_KUMA_FILE_DROP`，不入库。
+- 收到告警时：核对是否本人操作。不是本人时执行文档开头“凭据泄露时的影响范围”中的应急步骤，并查看 `audit.jsonl`。
+
+## 安全复审（2026-11-06）
+
+对 0.1.0 代码、NPM 实际生成配置、容器与防火墙逐项复查：
+
+| 问题 | 影响 | 处理 |
+| --- | --- | --- |
+| NPM 全局 `real_ip_header X-Real-IP`，并信任私有网段与 Cloudflare / CloudFront 网段，`$remote_addr` 可被请求头改写；经 Cloudflare Worker 或局域网可伪造日志与告警中的来源 IP | 中：可让告警 / 审计记成别的 IP | 两个 Host 改用 `$realip_remote_addr`（TCP 连接真实来源）；实测伪造 `X-Real-IP` 不再生效 |
+| 审计日志只在容器 stdout，重建容器即丢失（部署 0.2.0 时已丢失 19:56 那次上传前后的日志） | 中：事后无法追查 | 同时写入数据目录 `audit.jsonl`，并轮换 |
+| 请求体为 `null` 等非对象 JSON 时返回 500 | 低 | 改为 400，补测试 |
+| 绕过 Cloudflare 直连源站被拒的请求没有记录 | 低：看不到绕过尝试 | 记录 `page_reject`（方法、路径、真实来源） |
+
+复查确认无问题的项目：JWT 验签与 fail closed、写操作 Origin + CSRF、令牌 HMAC 恒定时间比较且绑定动作与文件、文件名清洗与 `Content-Disposition`、下载 `attachment` + `nosniff` + `sandbox` CSP、Range 解析、分片偏移与并发锁、配额、到期清理不碰进行中的上传、日志不含 JWT / 令牌 / 查询串、NPM `block-exploits` 规则与令牌字符集不冲突、容器只读 / 无能力 / 专用用户、出站只放行公网 443 与路由器 DNS。
+
+已知并接受的残余风险：下载链接（含 5 分钟令牌）会留在所用浏览器的历史记录中；令牌在有效期内可被重复使用（断点续传需要）；直连端没有 Cloudflare 的 DDoS 防护，只有 NPM 按 IP 限流。
 
 ## 构建与测试
 

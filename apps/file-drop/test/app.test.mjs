@@ -12,7 +12,7 @@ import { Tokens } from '../server/tokens.mjs';
 
 const config = { issuer: 'https://test.cloudflareaccess.com', audience: 'drop-test-only', origin: 'https://drop.example.test', emails: ['owner@example.test'] };
 const directOrigin = 'https://dl.example.test:8443';
-let app, page, direct, dir, store, key, clock = Date.now();
+let app, page, direct, dir, store, key, resolver, clock = Date.now();
 const now = () => clock;
 
 async function jwt(overrides = {}, signer = key) {
@@ -53,7 +53,7 @@ async function link(id) {
 before(async () => {
   const pair = await generateKeyPair('RS256');
   key = pair.privateKey;
-  const keyResolver = createLocalJWKSet({ keys: [{ ...await exportJWK(pair.publicKey), kid: 'test' }] });
+  const keyResolver = resolver = createLocalJWKSet({ keys: [{ ...await exportJWK(pair.publicKey), kid: 'test' }] });
   dir = await mkdtemp(`${tmpdir()}/file-drop-test-`);
   store = new Store(dir, { maxFile: 1000, quota: 2500, maxFiles: 5, chunk: 400, minFree: 0 }, now);
   await store.init();
@@ -219,4 +219,74 @@ test('文件名清洗', () => {
   assert.equal(cleanName(''), 'file');
   assert.equal(cleanName(42), 'file');
   assert.equal([...cleanName('长'.repeat(500))].length, 200);
+});
+
+test('JSON 请求体必须是对象', async () => {
+  const response = await fetch(page + '/api/uploads', { method: 'POST', body: 'null', headers: {
+    'cf-access-jwt-assertion': await jwt(), origin: config.origin, 'x-drop-csrf': config.origin, 'content-type': 'application/json' } });
+  assert.equal(response.status, 400);
+});
+
+test('新 IP 告警：首次出现写事件文件，IPv6 按 /64 归并，90 天后重新告警', async () => {
+  const { IpAlerts, ipKey } = await import('../server/alerts.mjs');
+  assert.equal(ipKey('2408:823d:e10:316c:89c6:bf9c:d10e:1b9e'), '2408:823d:e10:316c::/64');
+  assert.equal(ipKey('2408:823d:0e10:316c::1'), '2408:823d:e10:316c::/64');
+  assert.equal(ipKey('2408::1'), '2408:0:0:0::/64');
+  assert.equal(ipKey('1.2.3.4'), '1.2.3.4');
+  assert.equal(ipKey(''), null);
+  const root = await mkdtemp(`${tmpdir()}/file-drop-alerts-`);
+  let t = Date.now();
+  const alerts = new IpAlerts(root, () => t);
+  await alerts.init();
+  assert.equal(await alerts.seen('1.2.3.4', { via: 'page', action: 'GET /' }), true);
+  assert.equal(await alerts.seen('1.2.3.4', { via: 'direct', action: 'download' }), false);
+  assert.equal(await alerts.seen('2408:823d:e10:316c::1', { via: 'page', action: 'GET /' }), true);
+  assert.equal(await alerts.seen('2408:823d:e10:316c::2', { via: 'page', action: 'GET /' }), false);
+  const files = (await readdir(`${root}/alerts`)).filter(x => x.endsWith('.json'));
+  assert.equal(files.length, 2);
+  t += 91 * 24 * 60 * 60 * 1000;
+  const later = new IpAlerts(root, () => t);
+  await later.init();
+  assert.equal(await later.seen('1.2.3.4', { via: 'page', action: 'GET /' }), true);
+  await rm(root, { recursive: true, force: true });
+});
+
+test('应用接入告警：已登录页面请求与有效令牌的直连请求记录来源 IP，被拒请求不记录', async () => {
+  const events = [];
+  const fake = { seen: async (ip, info) => { events.push([ip, info.via, info.action]); return true; } };
+  const local = createApp({ config, keyResolver: resolver, store, directOrigin, alerts: fake });
+  for (const server of [local.page, local.direct]) { server.listen(0, '127.0.0.1'); await once(server, 'listening'); }
+  const p = `http://127.0.0.1:${local.page.address().port}`, d = `http://127.0.0.1:${local.direct.address().port}`;
+  await fetch(`${p}/`, { headers: { 'cf-connecting-ip': '9.9.9.9' } });
+  await fetch(`${d}/d/${'a'.repeat(32)}/x?t=bad`, { headers: { 'x-real-ip': '8.8.8.8' } });
+  assert.deepEqual(events, []);
+  await fetch(`${p}/`, { headers: { 'cf-connecting-ip': '9.9.9.9', 'cf-access-jwt-assertion': await jwt() } });
+  const job = await (await fetch(`${p}/api/uploads`, { method: 'POST', body: JSON.stringify({ name: 'a', size: 3 }), headers: {
+    'cf-access-jwt-assertion': await jwt(), origin: config.origin, 'x-drop-csrf': config.origin, 'content-type': 'application/json' } })).json();
+  await fetch(`${d}/u/${job.id}?offset=0`, { method: 'PUT', body: 'abc', headers: { 'x-drop-token': job.token, origin: config.origin, 'x-real-ip': '7.7.7.7' } });
+  assert.deepEqual(events.map(e => e.slice(0, 2)), [['9.9.9.9', 'page'], ['', 'page'], ['7.7.7.7', 'direct']]);
+  for (const server of [local.page, local.direct]) server.close();
+  await store.remove(job.id);
+});
+
+test('审计日志写入文件，不含 JWT 与令牌', async () => {
+  const logFile = `${dir}/audit-test.jsonl`;
+  const local = createApp({ config, keyResolver: resolver, store, directOrigin, logFile });
+  for (const server of [local.page, local.direct]) { server.listen(0, '127.0.0.1'); await once(server, 'listening'); }
+  const p = `http://127.0.0.1:${local.page.address().port}`, d = `http://127.0.0.1:${local.direct.address().port}`;
+  const assertion = await jwt();
+  const headers = { 'cf-access-jwt-assertion': assertion, origin: config.origin, 'x-drop-csrf': config.origin, 'content-type': 'application/json' };
+  const job = await (await fetch(`${p}/api/uploads`, { method: 'POST', body: JSON.stringify({ name: 'log.txt', size: 3 }), headers })).json();
+  await fetch(`${d}/u/${job.id}?offset=0`, { method: 'PUT', body: 'abc', headers: { 'x-drop-token': job.token, origin: config.origin } });
+  const { url } = await (await fetch(`${p}/api/files/${job.id}/link`, { method: 'POST', body: '{}', headers })).json();
+  const token = new URL(url).searchParams.get('t');
+  await (await fetch(url.replace(directOrigin, d))).arrayBuffer();
+  await fetch(`${d}/d/${job.id}/x?t=${token}x`);
+  await fetch(`${p}/`, { headers: { 'cf-access-jwt-assertion': 'forged' } });
+  await new Promise(r => setTimeout(r, 50));
+  const text = await (await import('node:fs/promises')).readFile(logFile, 'utf8');
+  for (const action of ['upload_start', 'upload_done', 'download_link', 'download', 'direct_reject', 'page_reject']) assert.match(text, new RegExp(action));
+  for (const secret of [assertion, job.token, token, 'forged']) assert.ok(!text.includes(secret));
+  for (const server of [local.page, local.direct]) server.close();
+  await store.remove(job.id);
 });

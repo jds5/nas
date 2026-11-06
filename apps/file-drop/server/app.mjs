@@ -1,6 +1,6 @@
 import http from 'node:http';
 import { createReadStream } from 'node:fs';
-import { readFile } from 'node:fs/promises';
+import { appendFile, readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { authorizer } from './auth.mjs';
 import { StoreError, validId } from './store.mjs';
@@ -19,9 +19,6 @@ const base = {
 };
 const UPLOAD_TTL = 30 * 60 * 1000, DOWNLOAD_TTL = 5 * 60 * 1000;
 
-function audit(event) {
-  console.log(JSON.stringify({ event: 'audit', time: new Date().toISOString(), ...event }));
-}
 function reply(res, code, value, extra = {}) {
   res.writeHead(code, { ...base, ...extra, 'Content-Type': 'application/json; charset=utf-8' });
   res.end(JSON.stringify(value));
@@ -37,7 +34,10 @@ async function json(req) {
     raw += chunk;
     if (raw.length > 4096) throw new StoreError(413, 'bad_body');
   }
-  try { return JSON.parse(raw); } catch { throw new StoreError(400, 'bad_body'); }
+  let value;
+  try { value = JSON.parse(raw); } catch { throw new StoreError(400, 'bad_body'); }
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new StoreError(400, 'bad_body');
+  return value;
 }
 // RFC 5987：ASCII 兜底名 + UTF-8 原名。
 function disposition(name) {
@@ -56,7 +56,17 @@ function range(header, size) {
 
 // page：drop 子域名，经 Cloudflare Access，每个请求验 JWT；写操作再验 Origin 与 CSRF 头。
 // direct：dl 子域名，灰云直连，只接受带有效短期令牌的上传分片与下载，其他一律 404。
-export function createApp({ config, keyResolver, store, directOrigin, tokens = new Tokens() }) {
+export function createApp({ config, keyResolver, store, directOrigin, tokens = new Tokens(), alerts = null, logFile = null }) {
+  // 日志同时写 stdout 和数据目录中的文件；容器重建后文件仍在，不含 JWT、令牌与查询串。
+  const log = event => {
+    const line = JSON.stringify({ time: new Date().toISOString(), ...event });
+    console.log(line);
+    if (logFile) appendFile(logFile, `${line}\n`, { mode: 0o600 }).catch(() => {});
+  };
+  const audit = event => log({ event: 'audit', ...event });
+  // 新来源 IP 告警：失败只记日志，不影响请求。
+  const notice = (ip, info) => alerts?.seen(ip, info).catch(error =>
+    console.error(JSON.stringify({ event: 'alert_error', code: error.code || 'internal' })));
   const authenticate = authorizer(config, keyResolver);
   const csp = `default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; ` +
     `connect-src 'self' ${directOrigin}; frame-ancestors 'none'; base-uri 'none'; form-action 'none'`;
@@ -70,9 +80,15 @@ export function createApp({ config, keyResolver, store, directOrigin, tokens = n
   const page = http.createServer({ maxHeaderSize: 24576, requestTimeout: 60000, headersTimeout: 10000 }, async (req, res) => {
     try {
       const user = await authenticate(req);
-      if (!user) return reply(res, 403, { error: '请重新登录' });
+      if (!user) {
+        // 经 Cloudflare 的请求在 Access 已被拦下，到这里的多为绕过 Cloudflare 直连源站的尝试。
+        log({ event: 'page_reject', method: req.method, path: String(req.url).split('?')[0].slice(0, 80), ip: req.headers['x-real-ip'] || '' });
+        req.resume();
+        return reply(res, 403, { error: '请重新登录' });
+      }
       const ip = req.headers['cf-connecting-ip'] || '';
       const country = req.headers['cf-ipcountry'] || '';
+      notice(ip, { via: 'page', action: `${req.method} ${String(req.url).split('?')[0].slice(0, 40)}`, email: user.email, country });
       const url = new URL(req.url, 'http://drop.invalid');
       if (req.method === 'GET' || req.method === 'HEAD') {
         if (pages.has(req.url)) {
@@ -129,7 +145,7 @@ export function createApp({ config, keyResolver, store, directOrigin, tokens = n
     const url = new URL(req.url, 'http://dl.invalid');
     const parts = url.pathname.split('/');
     const reject = (reason, code = 404, extra = {}) => {
-      console.log(JSON.stringify({ event: 'direct_reject', time: new Date().toISOString(), method: req.method, path: url.pathname.slice(0, 80), reason, ip }));
+      log({ event: 'direct_reject', method: req.method, path: url.pathname.slice(0, 80), reason, ip });
       req.resume();
       deny(res, code, extra);
     };
@@ -145,6 +161,7 @@ export function createApp({ config, keyResolver, store, directOrigin, tokens = n
         if (req.method !== 'PUT') return reject('method');
         if (req.headers.origin !== config.origin) return reject('origin', 403);
         if (!tokens.verify(req.headers['x-drop-token'], 'up', parts[2])) return reject('token', 403, cors);
+        notice(ip, { via: 'direct', action: 'upload' });
         const offset = Number(url.searchParams.get('offset'));
         const length = Number(req.headers['content-length']);
         if (!/^\d+$/.test(url.searchParams.get('offset') || '') || [...url.searchParams.keys()].length !== 1) return reject('query', 400, cors);
@@ -163,6 +180,7 @@ export function createApp({ config, keyResolver, store, directOrigin, tokens = n
       if (parts.length === 4 && parts[1] === 'd' && validId(parts[2])) {
         if (req.method !== 'GET' && req.method !== 'HEAD') return reject('method');
         if (!tokens.verify(url.searchParams.get('t'), 'dl', parts[2])) return reject('token', 403);
+        notice(ip, { via: 'direct', action: 'download' });
         const entry = store.complete(parts[2]);
         if (!entry) return reject('gone');
         const r = range(req.headers.range, entry.size);

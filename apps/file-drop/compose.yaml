@@ -4,7 +4,7 @@ services:
     build:
       context: .
       target: production
-    image: nas-file-drop:0.1.0
+    image: nas-file-drop:0.2.0
     container_name: nas_file_drop
     restart: unless-stopped
     init: true

@@ -1,4 +1,4 @@
-// 在 NPM 容器内运行：node /tmp/file-drop-npm-hosts.mjs apply|remove
+// 在 NPM 容器内运行：node /tmp/file-drop-npm-hosts.mjs apply|update|remove（update 只按模板替换两个 Host 的 Advanced）
 // 需要 /tmp/file-drop-nginx-drop.conf 与 /tmp/file-drop-nginx-dl.conf（本目录模板）。
 // 使用 NPM 自身的模型与配置生成器，只新增 / 删除 drop、dl 两个 Proxy Host，不改其他 Host。
 import fs from 'node:fs';
@@ -10,7 +10,7 @@ const hosts = { 'drop.rokano.org': '/tmp/file-drop-nginx-drop.conf', 'dl.rokano.
 const action = process.argv[2];
 const find = name => Model.query().where('is_deleted', 0).then(rows => rows.filter(r => r.domain_names.includes(name)));
 try {
-  if (!['apply', 'remove'].includes(action)) throw new Error('expected apply or remove');
+  if (!['apply', 'update', 'remove'].includes(action)) throw new Error('expected apply, update or remove');
   for (const [name, file] of Object.entries(hosts)) {
     const existing = await find(name);
     if (action === 'remove') {
@@ -20,6 +20,21 @@ try {
         await nginx.reload();
         console.log(`removed ${name} (id ${row.id})`);
       }
+      continue;
+    }
+    if (action === 'update') {
+      if (existing.length !== 1) throw new Error(`${name}: expected exactly one host`);
+      const row = existing[0];
+      const backup = `/data/file-drop-npm-${row.id}-${Date.now()}.conf`;
+      fs.writeFileSync(backup, row.advanced_config || '', { mode: 0o600, flag: 'wx' });
+      await Model.query().findById(row.id).patch({ advanced_config: fs.readFileSync(file, 'utf8') });
+      const result = await nginx.configure(Model, 'proxy_host', await Model.query().findById(row.id).withGraphFetched('certificate'));
+      if (!result.nginx_online) {
+        await Model.query().findById(row.id).patch({ advanced_config: row.advanced_config });
+        await nginx.configure(Model, 'proxy_host', await Model.query().findById(row.id).withGraphFetched('certificate'));
+        throw new Error(`${name}: nginx validation failed, previous config restored`);
+      }
+      console.log(`updated ${name} (id ${row.id}); backup ${backup}`);
       continue;
     }
     if (existing.length) throw new Error(`${name} already exists (id ${existing[0].id}); inspect before editing`);
