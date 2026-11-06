@@ -8,9 +8,9 @@
 
 - [x] 设计方案；用户确认（11-06）：独立子域名、4 GiB / 20 GiB、固定保留 12 小时、Access 邮箱验证码登录 + 文件直连
 - [x] 第 1 阶段（11-06）：代码、Docker、10 项自动化测试与浏览器验收全部通过，见“构建与测试”
-- [ ] 第 2 阶段：NAS 内部部署（不开放公网，应用 fail closed）。已完成：`nas-drop-front` 网络（网桥 `br-filedrop`，172.30.0.0/16）、生产镜像 `nas-file-drop:0.1.0`。**等待临时 sudo**：建用户与目录、出站防火墙、NPM 限速配置
-- [ ] 第 3 阶段：Cloudflare DNS / Origin Rule / Access 应用（**等待用户在控制台配置并提供 AUD**），NPM 新增两个 Host
-- [ ] 第 4 阶段：上线验收，更新端口清单与运维记录
+- [x] 第 2 阶段（11-06）：用户 `filedrop`、目录、出站防火墙、容器、NPM 限速；未登录全部拒绝
+- [x] 第 3 阶段（11-06）：用户完成 Cloudflare DNS / Origin Rule / Access；NPM 新增 Host 9（drop）、10（dl）；匿名与源站绕过验收通过，见 [部署记录](../../docs/operations/2026-11-06-临时文件中转站部署.md)
+- [ ] 第 4 阶段：**等待用户真实登录验收**（电脑上传、手机下载）；之后视需要补 Kuma 告警
 
 ## 架构
 
@@ -208,7 +208,7 @@ docker stop drop-fixture && docker network rm drop-browser-test
 ### 需要 sudo（助手执行）
 
 1. 专用用户与目录：`useradd --system --no-create-home --shell /usr/sbin/nologin filedrop`；`install -d -o filedrop -g filedrop -m 700 /mnt/pool-main/drop`。
-2. 出站防火墙：`deploy/egress-firewall.sh` 复制到 `/opt/nas/scripts/file-drop-egress-firewall.sh`，`deploy/nas-file-drop-egress.service` 安装到 `/etc/systemd/system/` 并启用；验证容器访问局域网 / 宿主机失败、访问公网 443 成功。
+2. 出站防火墙（只放行公网 TCP 443 与路由器 DNS 192.168.50.1:53；Docker 内置 DNS 在容器命名空间内向路由器转发，必须放行）：`deploy/egress-firewall.sh` 复制到 `/opt/nas/scripts/file-drop-egress-firewall.sh`，`deploy/nas-file-drop-egress.service` 安装到 `/etc/systemd/system/` 并启用；验证容器访问局域网 / 宿主机失败、访问公网 443 成功。
 3. NPM http 级限速：把 `deploy/nginx-http.conf` 追加到 `/opt/nas/npm/data/nginx/custom/http.conf`（先备份）。
 
 ### 需要用户在 Cloudflare 控制台配置
@@ -221,7 +221,7 @@ docker stop drop-fixture && docker network rm drop-browser-test
 ### 之后（助手执行）
 
 1. `.env`（权限 600）：Team Domain 与允许邮箱沿用网页终端 `.env` 中的值，填入新 AUD、`DROP_UID/GID`。
-2. `docker compose up -d`；确认未带 JWT 时页面端 403、直连端 404。
+2. `docker compose up -d`；确认未带 JWT 时页面端 403；直连端无效令牌 403、其他路径 404。
 3. 把 NPM 加入 `nas-drop-front`（同步修改 `/opt/nas/npm/docker-compose.yml` 的 external network），`deploy/npm-hosts.mjs apply` 新增两个 Host（使用 `*.rokano.org` 证书，强制 HTTPS）。
 4. 按 Access 手册验收：匿名访问被 Access 拦截；源站绕过（直连 8443 指定 drop 主机名，无 / 伪造 JWT）403；dl 无令牌 404；真实登录后在电脑上传、手机下载；日志无 JWT / 令牌。真实登录这一步需要你在手机和电脑上各操作一次。
 
