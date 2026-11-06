@@ -1,33 +1,33 @@
-# 临时文件中转站（设计方案）
+# 临时文件中转站
 
-2026-11-06 起。用途：在外面时把文件从一台电脑临时传到自己的手机（反向也可），代替 U 盘。只提供上传、下载，文件到期自动删除。
+2026-11-06 起。用途：在外面时把文件从一台电脑临时传到自己的手机（反向也可），代替 U 盘。只提供上传、下载，文件 12 小时后自动删除。
 
-**状态：方案待用户确认，尚未编写代码、未部署。** 本目录是该任务的独立工作目录，进展、决定和验证结果都同步更新本文件。
+本目录是该任务的独立工作目录，进展、决定和验证结果都同步更新本文件。
 
 ## 当前进度
 
-- [x] 设计方案（本文件）
-- [x] 用户确认方案（11-06）：独立子域名、4 GiB / 20 GiB、文件固定保留 12 小时
-- [ ] 用户决定登录方式：Cloudflare Access 或固定密码；以及是否采用“文件直连通道”
-- [ ] 第 1 阶段：编写代码与自动化测试
-- [ ] 第 2 阶段：NAS 内部部署（不开放公网，应用 fail closed）
-- [ ] 第 3 阶段：Cloudflare Access 与公网路由
+- [x] 设计方案；用户确认（11-06）：独立子域名、4 GiB / 20 GiB、固定保留 12 小时、Access 邮箱验证码登录 + 文件直连
+- [x] 第 1 阶段（11-06）：代码、Docker、10 项自动化测试与浏览器验收全部通过，见“构建与测试”
+- [ ] 第 2 阶段：NAS 内部部署（不开放公网，应用 fail closed）。已完成：`nas-drop-front` 网络（网桥 `br-filedrop`，172.30.0.0/16）、生产镜像 `nas-file-drop:0.1.0`。**等待临时 sudo**：建用户与目录、出站防火墙、NPM 限速配置
+- [ ] 第 3 阶段：Cloudflare DNS / Origin Rule / Access 应用（**等待用户在控制台配置并提供 AUD**），NPM 新增两个 Host
 - [ ] 第 4 阶段：上线验收，更新端口清单与运维记录
 
-## 参照
+## 架构
 
-沿用 Homeland / Stock / [网页终端](../web-terminal/README.md) 已有的公网模式，鉴权要求以 [Access 实施手册](../../docs/security/CLOUDFLARE_ACCESS_IMPLEMENTATION.md) 中的“整站私有应用”为准：
+鉴权要求以 [Access 实施手册](../../docs/security/CLOUDFLARE_ACCESS_IMPLEMENTATION.md) 中的“整站私有应用”为准，实现方式参照 [网页终端](../web-terminal/README.md)：
 
 ```text
-浏览器（外面的电脑 / 手机）
-  → Cloudflare Access（独立应用，只允许你的邮箱）
-  → 现有 Worker → origin-home.rokano.org:8443 / NPM
-  → 独立 Docker 网络 nas-drop-front / file-drop 容器（不发布宿主端口）
-  → 应用逐请求验证 Access JWT（RS256、iss、独立 aud、exp/nbf、邮箱白名单）
-  → /mnt/pool-main/drop（专用目录，不进备份）
+页面与接口：浏览器 → drop.rokano.org（橙云，CNAME origin-home，Origin Rule 回源 8443）
+  → Cloudflare Access（独立应用，只允许你的邮箱，邮箱验证码登录）
+  → NPM → nas-drop-front / nas-file-drop:3000
+  → 应用逐请求验证 Access JWT（RS256、iss、独立 aud、exp/nbf、邮箱白名单），写操作再验 Origin + CSRF 头
+文件数据：浏览器 → dl.rokano.org:8443（灰云，CNAME jelly，直连家庭 IP）
+  → NPM（按 IP 限并发与频率）→ nas-file-drop:3001
+  → 只接受带有效短期令牌的上传分片与下载，其他一律 404
+存储：/mnt/pool-main/drop（专用用户 filedrop，700，不进备份）
 ```
 
-### 文件直连通道（11-06 用户提出，方案待确认）
+### 文件直连通道（11-06 用户确认）
 
 Cloudflare 免费线路对家里是负加速，所以**只让文件数据绕开 Cloudflare**：页面、登录、列表仍走 `drop.rokano.org`（橙云 + Access），上传、下载的数据走灰云子域名 `dl.rokano.org` 直连 NAS。做法类似对象存储的“预签名 URL”：
 
@@ -73,7 +73,7 @@ dl.rokano.org:8443（灰云，直连家庭 IP，复用 NPM 现有 *.rokano.org �
 - 浏览器同源策略把它和终端隔开；
 - Access 会话、退出登录也与其他应用互不影响，可以单独设置较短的会话时长。
 
-代价是要在 Cloudflare 新增一条 DNS/Worker 路由，NPM 新增一个 Host。
+代价是要在 Cloudflare 新增 DNS 记录与 Origin Rule，NPM 新增 Host。
 
 ### 3. 只传不渲染：防止上传内容变成攻击代码
 
@@ -160,29 +160,74 @@ dl.rokano.org:8443（灰云，直连家庭 IP，复用 NPM 现有 *.rokano.org �
 
 ## 已决定（2026-11-06）
 
-- 访问地址用独立子域名 `drop.rokano.org`。
+- 访问地址：页面 `drop.rokano.org`，文件数据 `dl.rokano.org:8443` 直连。
 - 单文件 4 GiB、总容量 20 GiB、文件数 200；文件固定保留 12 小时。
+- 登录用 Cloudflare Access 邮箱验证码（用户曾提出固定密码，比较后选择 Access + 直连，不做固定密码）。
+- 第一版不做免登录取件码；以后需要时另行设计，因为它会开一个匿名入口。
 
-## 未决事项（需要你确认）
+## 实现
 
-1. **登录方式**：用户提出改用固定密码、不用 Cloudflare Access。对比如下，等待用户决定：
+| 文件 | 内容 |
+| --- | --- |
+| `server/auth.mjs` | Access JWT 验签（与网页终端相同），额外返回验签后的邮箱 |
+| `server/tokens.mjs` | 直连令牌：HMAC-SHA256，绑定动作 / 文件 ID / 过期时间；密钥每次启动随机生成，不落盘 |
+| `server/store.mjs` | 存储：随机 ID 文件名、元数据 JSON 原子替换、配额、按偏移续传、SHA-256、到期与孤立文件清理 |
+| `server/app.mjs` | 两个 HTTP 服务：3000 页面端（Access），3001 直连端（令牌） |
+| `public/` | 原生 HTML/JS/CSS 页面，严格 CSP（无内联脚本） |
+| `deploy/` | NPM 两个 Host 的 Advanced 模板与创建脚本、NPM http 级限速、出站防火墙脚本与 systemd 单元 |
 
-   | | Cloudflare Access（邮箱验证码） | 固定密码 |
-   | --- | --- | --- |
-   | 未登录的请求 | 在 Cloudflare 边缘就被拦下，到不了 NAS | 能到达应用；登录页和应用代码对全网暴露，有漏洞就能被利用 |
-   | 在别人电脑上使用 | 输入发到手机邮箱的一次性验证码，被键盘记录也无法重用 | 被键盘记录或偷看后长期有效，直到改密码 |
-   | 暴力猜测 | 不存在 | 要自己做限速、锁定 |
-   | 第二道防线 | 应用再验签，Access 失效也不放行 | 没有 |
-   | 使用便利 | 每次会话过期要等验证码 | 直接输入 |
+接口（页面端，全部要求 Access JWT）：`GET /api/files`；`POST /api/uploads`（新建上传，返回令牌）；`POST /api/uploads/<id>/token`（续签并返回已收字节）；`POST /api/files/<id>/link`（5 分钟下载地址）；`DELETE /api/files/<id>`。直连端：`PUT /u/<id>?offset=N`（头 `X-Drop-Token`，每片 ≤ 32 MiB）、`GET/HEAD /d/<id>/<文件名>?t=令牌`（支持 Range）。
 
-   若选固定密码，最低要求：至少 20 位随机密码、argon2id 存储哈希、按 IP 和全局限速与锁定、登录成功后发短期会话 Cookie（`Secure`、`HttpOnly`、`SameSite=Strict`、限定子域名）、仍走 Cloudflare 代理、登录失败与新 IP 登录告警，并在网络安全架构中记录这一例外。
-2. **免登录取件码**（第一版不做）：如果以后要给没登录 Access 的设备（例如朋友的手机）取文件，需要单独设计一次性取件码。这会开一个匿名入口，届时另行评估。
+审计日志输出到容器 stdout（`docker logs nas_file_drop`）：上传开始 / 完成、生成下载链接、下载、删除、到期清理，以及直连端被拒请求（方法、去掉查询串的路径、原因、IP），不含 JWT 与令牌。
 
-## 下一步
+未实现：新 IP / 境外上传的 Kuma 告警（列表已显示上传来源 IP 与国家），上线后视需要补充。
 
-用户确认未决事项后：
+## 构建与测试
 
-1. 第 1 阶段：在本目录编写代码、Dockerfile、compose 和测试。测试覆盖伪造 / 过期 / 错误 aud 的 JWT、错误 Origin、路径穿越文件名、超出配额、分片续传、Range 下载、到期清理。
-2. 第 2 阶段：核对 [服务与端口清单](../../docs/operations/服务与端口清单.md) 和现场监听，创建目录与网络，部署容器，确认未配置 Access 时全部返回 403。
-3. 第 3 阶段：Cloudflare 后台创建 Access 应用、DNS / Worker 路由（这部分需要你在控制台操作或提供授权方式），NPM 增加路由。
-4. 第 4 阶段：按 Access 手册的测试矩阵验收，包括真实登录、源站绕过、日志无凭据；更新端口清单、README 和运维记录。
+```bash
+cd /home/yao/code/nas/apps/file-drop
+docker build --target test -t nas-file-drop:test .
+docker run --rm --init --cap-drop ALL --security-opt no-new-privileges nas-file-drop:test
+docker build --target production -t nas-file-drop:0.1.0 .
+```
+
+自动化测试覆盖：配置校验；缺少 / 伪造 / 过期 / 错误 aud、iss、邮箱的 JWT；未配置时 fail closed；写操作 Origin 与 CSRF；路径穿越与双向控制符文件名；分片偏移 409、超长分片、单文件 / 总量 / 并发上限；令牌篡改、过期、跨文件、上传令牌不能下载；CORS 预检来源；删除与 12 小时到期后拒绝下载、清理孤立文件。
+
+浏览器验收（`test/browser-fixture.mjs` 仅在测试镜像中模拟 Access 身份，不能用于线上）：Playwright 1.63 上传 2.5 MiB（3 个分片，第二片模拟断流后自动续签续传）、列表与 SHA-256、下载内容与中文文件名一致、删除。11-06 通过；过程中发现并修复了文件列表被计数字段覆盖的问题。
+
+```bash
+docker network create drop-browser-test
+docker run -d --rm --name drop-fixture --init --network drop-browser-test -v <空目录>:/shared nas-file-drop:test node test/browser-fixture.mjs
+docker run --rm --init --network drop-browser-test -v "$PWD/test/browser.cjs:/test/browser.cjs:ro" -v <同一目录>:/shared:ro -v <截图目录>:/artifacts \
+  mcr.microsoft.com/playwright:v1.63.0-noble sh -c 'cd /tmp && npm install --no-audit --no-fund playwright@1.63.0 && NODE_PATH=/tmp/node_modules node /test/browser.cjs'
+docker stop drop-fixture && docker network rm drop-browser-test
+```
+
+## 部署步骤
+
+### 需要 sudo（助手执行）
+
+1. 专用用户与目录：`useradd --system --no-create-home --shell /usr/sbin/nologin filedrop`；`install -d -o filedrop -g filedrop -m 700 /mnt/pool-main/drop`。
+2. 出站防火墙：`deploy/egress-firewall.sh` 复制到 `/opt/nas/scripts/file-drop-egress-firewall.sh`，`deploy/nas-file-drop-egress.service` 安装到 `/etc/systemd/system/` 并启用；验证容器访问局域网 / 宿主机失败、访问公网 443 成功。
+3. NPM http 级限速：把 `deploy/nginx-http.conf` 追加到 `/opt/nas/npm/data/nginx/custom/http.conf`（先备份）。
+
+### 需要用户在 Cloudflare 控制台配置
+
+1. DNS：`drop` CNAME `origin-home.rokano.org`，**已代理（橙云）**。
+2. Rules → Origin Rules：主机名等于 `drop.rokano.org` 时，目标端口改写为 `8443`。
+3. DNS：`dl` CNAME `jelly.rokano.org`，**仅 DNS（灰云）**。
+4. Zero Trust → Access → Applications：新建 Self-hosted 应用，域名 `drop.rokano.org`（整个域名，不填路径），Allow 策略只放你的邮箱，登录方式 One-time PIN，会话时长 12 小时；不设 Bypass。把应用的 **Application Audience (AUD) Tag** 发给助手（它不是密钥，但只写入不入库的 `.env`）。
+
+### 之后（助手执行）
+
+1. `.env`（权限 600）：Team Domain 与允许邮箱沿用网页终端 `.env` 中的值，填入新 AUD、`DROP_UID/GID`。
+2. `docker compose up -d`；确认未带 JWT 时页面端 403、直连端 404。
+3. 把 NPM 加入 `nas-drop-front`（同步修改 `/opt/nas/npm/docker-compose.yml` 的 external network），`deploy/npm-hosts.mjs apply` 新增两个 Host（使用 `*.rokano.org` 证书，强制 HTTPS）。
+4. 按 Access 手册验收：匿名访问被 Access 拦截；源站绕过（直连 8443 指定 drop 主机名，无 / 伪造 JWT）403；dl 无令牌 404；真实登录后在电脑上传、手机下载；日志无 JWT / 令牌。真实登录这一步需要你在手机和电脑上各操作一次。
+
+## 回滚
+
+1. `docker exec npm node /tmp/file-drop-npm-hosts.mjs remove` 删除两个 Host；从 NPM Compose 与网络中移除 `nas-drop-front`，删除 `http.conf` 中 `nas-file-drop` 标记块并重载。
+2. `docker compose down`；`systemctl disable --now nas-file-drop-egress`；`docker network rm nas-drop-front`。
+3. Cloudflare 删除 `drop`、`dl` 两条 DNS、Origin Rule 与 Access 应用。
+4. `/mnt/pool-main/drop` 中只有临时文件，是否删除另行确认；删除用户 `filedrop`。

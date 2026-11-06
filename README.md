@@ -58,7 +58,7 @@
 | [网页终端安全审查](docs/security/WEB_TERMINAL_SECURITY_REVIEW.md) | 同域风险、NAS 权限边界、撤销与剩余风险 |
 | [网页终端 24 小时连接](docs/operations/2026-10-07-网页终端24小时连接.md) | 服务端固定连接期限、心跳容错、JWT 边界与部署回滚 |
 | [网页终端断连优化](docs/operations/2026-10-07-网页终端断连排查与优化.md) | 应用心跳、输出流控、有限自动重连、关闭诊断与回滚 |
-| [临时文件中转站](apps/file-drop/README.md) | 外出时电脑与手机互传文件：整站 Access + 应用验签、只上传下载不渲染、到期自动删除；方案待确认 |
+| [临时文件中转站](apps/file-drop/README.md) | 外出时电脑与手机互传文件：整站 Access + 应用验签、只上传下载不渲染、12 小时自动删除；文件数据走灰云直连；代码与测试完成，部署中 |
 | [NAS 网页终端](apps/web-terminal/README.md) | 整站 Access 保护的 tmux / 临时 SSH、Claude Code / Codex Markdown 对话与部署验证 |
 | [网页终端实施记录](docs/operations/2026-09-29-NAS网页终端.md) | 内部部署、真实 PTY 与浏览器测试、待完成的公网配置 |
 | [手机外网连接与 SSH 配置](docs/operations/手机外网连接与SSH密钥配置.md) | 本机连接信息、手机专用密钥、公网入口与 key-only 步骤 |
@@ -80,7 +80,7 @@ scripts/media/        # 媒体整理脚本
 scripts/codex/        # 指定 tmux/Codex 会话恢复工具
 apps/android/         # 独立 Android SSH/tmux 控制端
 apps/web-terminal/    # 整站 Access 保护的网页 tmux 终端
-apps/file-drop/       # 临时文件中转站（方案阶段）
+apps/file-drop/       # 临时文件中转站（Access 页面 + 直连传输）
 ```
 
 生产配置和其他维护脚本按原记录位于 `/opt/nas` / 独立 `nas-config` 仓库，尚未收录于本项目。取得文件并核对后，再按需增加 `configs/<服务>/` 或 `scripts/<用途>/`，不预建空目录。

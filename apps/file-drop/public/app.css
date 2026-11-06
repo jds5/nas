@@ -1,0 +1,28 @@
+:root { --bg: #f6f7f9; --card: #fff; --text: #1d2330; --muted: #69707d; --line: #dde1e7; --accent: #2563eb; --danger: #c62828; --bar: #e6e9ee; }
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #14171c; --card: #1d2128; --text: #e6e8eb; --muted: #9aa1ad; --line: #2e333b; --accent: #5b8def; --danger: #ef6b6b; --bar: #2a2f37; }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.5 system-ui, -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; }
+header { display: flex; align-items: center; justify-content: space-between; max-width: 760px; margin: 0 auto; padding: 16px; }
+h1 { font-size: 20px; margin: 0; }
+h2 { font-size: 16px; margin: 24px 0 8px; }
+h2 small, .muted { color: var(--muted); font-weight: normal; font-size: 13px; }
+main { max-width: 760px; margin: 0 auto; padding: 0 16px 32px; }
+a { color: var(--accent); }
+.drop { display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 32px 16px; border: 2px dashed var(--line); border-radius: 12px; background: var(--card); cursor: pointer; text-align: center; }
+.drop.over { border-color: var(--accent); }
+.drop input { display: none; }
+.drop small { color: var(--muted); }
+.list { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.list li { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 12px; display: grid; gap: 6px; }
+.row { display: flex; gap: 8px; align-items: center; justify-content: space-between; flex-wrap: wrap; }
+.name { font-weight: 600; overflow-wrap: anywhere; }
+.meta { color: var(--muted); font-size: 13px; overflow-wrap: anywhere; }
+.actions { display: flex; gap: 8px; }
+button { font: inherit; padding: 6px 14px; border-radius: 8px; border: 1px solid var(--line); background: var(--card); color: var(--text); cursor: pointer; }
+button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+button.danger { color: var(--danger); }
+button:disabled { opacity: .5; cursor: default; }
+progress { width: 100%; height: 8px; accent-color: var(--accent); }
+.error { color: var(--danger); }

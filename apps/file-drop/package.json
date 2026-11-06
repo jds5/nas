@@ -1,0 +1,16 @@
+{
+  "name": "nas-file-drop",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node server/main.mjs",
+    "test": "node --test --test-concurrency=1 test/*.test.mjs"
+  },
+  "dependencies": {
+    "jose": "6.2.12"
+  },
+  "engines": {
+    "node": ">=24"
+  }
+}

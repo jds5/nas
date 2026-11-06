@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>文件中转</title>
+<link rel="stylesheet" href="/app.css">
+<script src="/app.js" defer></script>
+</head>
+<body>
+<header>
+  <h1>文件中转</h1>
+  <a class="logout" href="/cdn-cgi/access/logout">退出登录</a>
+</header>
+<main>
+  <label id="drop" class="drop">
+    <input id="picker" type="file" multiple>
+    <span>点击选择文件，或拖到这里</span>
+    <small id="limits"></small>
+  </label>
+  <ul id="uploads" class="list"></ul>
+  <h2>文件 <small id="usage"></small></h2>
+  <p id="empty" class="muted" hidden>暂无文件</p>
+  <ul id="files" class="list"></ul>
+  <p id="error" class="error" role="alert" hidden></p>
+  <p class="muted">文件上传 12 小时后自动删除。在别人的电脑上用完请点“退出登录”。</p>
+</main>
+</body>
+</html>

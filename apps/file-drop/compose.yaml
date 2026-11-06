@@ -1,0 +1,44 @@
+name: nas-file-drop
+services:
+  drop:
+    build:
+      context: .
+      target: production
+    image: nas-file-drop:0.1.0
+    container_name: nas_file_drop
+    restart: unless-stopped
+    init: true
+    # 专用无权限用户；未配置时启动失败，不会退回 root 或 yao。
+    user: "${DROP_UID:?}:${DROP_GID:?}"
+    environment:
+      CF_ACCESS_TEAM_DOMAIN: ${CF_ACCESS_TEAM_DOMAIN:-}
+      CF_ACCESS_AUD: ${CF_ACCESS_AUD:-}
+      CF_ACCESS_ALLOWED_ORIGIN: ${CF_ACCESS_ALLOWED_ORIGIN:-}
+      CF_ACCESS_ALLOWED_EMAILS: ${CF_ACCESS_ALLOWED_EMAILS:-}
+      DIRECT_ORIGIN: ${DIRECT_ORIGIN:-}
+    volumes:
+      - type: bind
+        source: ${DROP_DIR:-/mnt/pool-main/drop}
+        target: /data
+        bind:
+          create_host_path: false
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 64
+    mem_limit: 256m
+    cpus: 1.0
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "5"
+    networks:
+      front:
+        aliases: [nas-file-drop]
+networks:
+  front:
+    name: nas-drop-front
+    external: true

@@ -1,0 +1,13 @@
+[Unit]
+Description=Restrict egress of the file-drop container network
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/opt/nas/scripts/file-drop-egress-firewall.sh apply
+ExecStop=/opt/nas/scripts/file-drop-egress-firewall.sh remove
+
+[Install]
+WantedBy=multi-user.target
