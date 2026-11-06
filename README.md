@@ -25,7 +25,7 @@
 | [10 月 22 日 NAS 巡检与外部攻击日志检查](docs/operations/2026-10-22-NAS巡检与外部攻击日志检查.md) | SSH 暴力尝试与 Web 扫描均被拒绝、无入侵迹象；主机健康、OneDrive 备份仍失败、IPv6 边界待验证 |
 | [电视 Jellyfin 灯带同步](tv-ambilight/README.md) | 待执行（物料已备）：LG G5 + Litefin + WLED，NAS 预计算取色插件需适配 Jellyfin 12.4，方案评估结论与分阶段步骤 |
 | [Surface Pro 5 安装 macOS](surface-macos/README.md) | 进行中（等待硬件）：目标 macOS 26 Tahoe、硬件预期、物料下载脚本与校验清单、分阶段步骤与回滚 |
-| [内网 GPU 主机部署 ComfyUI 与 Qwen-Image-2.1](docs/operations/2026-11-02-内网GPU主机部署ComfyUI与Qwen-Image-2.1.md) | 192.168.50.20 上 ComfyUI 0.43.0 便携版 + Qwen-Image-2.1 int8 + BFS Head v1.1 换头 LoRA，文生图 17 s / 换头 30 s，仅本机访问 |
+| [ComfyUI 图像生成（GPU 主机）](comfyui/README.md) | 192.168.50.20 上 ComfyUI 0.43.0 + Qwen-Image-2.1 + BFS Head v1.1 换头；从 NAS 远程启动 / 停止、使用方法、主机脚本副本、更新流程与变更记录 |
 | [内网 GPU 主机部署 Qwen3.8-27B](docs/operations/2026-10-23-内网GPU主机部署Qwen3.8-27B.md) | 192.168.50.20 上 llama.cpp CUDA 13 + 4-bit GGUF，全 GPU 与 MTP 调优，66–100 tok/s，仅本机访问 |
 | [Immich 与机器学习升级](docs/operations/2026-10-09-Immich与机器学习升级.md) | 3.3.1、OpenVINO / v2 优化模型、数据库恢复验证与回滚 |
 | [山路驿站下载页](docs/operations/2026-10-08-山路驿站下载页.md) | 内网只读下载页、公网入口撤下、端口与恢复 |
@@ -82,6 +82,7 @@ scripts/codex/        # 指定 tmux/Codex 会话恢复工具
 apps/android/         # 独立 Android SSH/tmux 控制端
 apps/web-terminal/    # 整站 Access 保护的网页 tmux 终端
 apps/file-drop/       # 临时文件中转站（Access 页面 + 直连传输）
+comfyui/              # GPU 主机 ComfyUI 图像生成：用法、脚本与变更记录
 ```
 
 生产配置和其他维护脚本按原记录位于 `/opt/nas` / 独立 `nas-config` 仓库，尚未收录于本项目。取得文件并核对后，再按需增加 `configs/<服务>/` 或 `scripts/<用途>/`，不预建空目录。
