@@ -19,7 +19,9 @@ listening() { ps '(Get-NetTCPConnection -LocalPort 8188 -State Listen -ErrorActi
 case "${1:-status}" in
   start)
     if [ -n "$(listening)" ]; then echo "已在运行"; exit 0; fi
-    run "query user" | grep -qi "yaoch" || { echo "yaoch 未登录 Windows 桌面，无法在桌面会话启动" >&2; exit 1; }
+    # query user 即使成功也可能返回非零，先取输出再匹配，避免 pipefail 误判。
+    users=$(run "query user" || true)
+    grep -qi "yaoch" <<<"$users" || { echo "yaoch 未登录 Windows 桌面，无法在桌面会话启动" >&2; exit 1; }
     run "schtasks /Create /TN $TASK /TR \"C:\\llm\\comfyui\\start-comfyui.cmd\" /SC ONCE /ST 23:59 /IT /RL LIMITED /F >nul && schtasks /Run /TN $TASK >nul" >/dev/null
     for _ in $(seq 1 36); do sleep 5; [ -n "$(listening)" ] && break; done
     run "schtasks /Delete /TN $TASK /F >nul" >/dev/null || true
@@ -42,7 +44,12 @@ case "${1:-status}" in
       echo "ComfyUI：未运行"
     fi
     echo "显存（已用, 总量）：$(run 'nvidia-smi --query-gpu=memory.used,memory.total --format=csv,noheader' | tr -d '\r')"
-    echo "Qwen3.8 容器：$(run 'docker ps --filter name=qwen38 --format "{{.Names}} {{.Status}}"' | tr -d '\r' | grep . || echo 未运行)"
+    qwen=$(run 'docker ps --filter name=qwen38 --format "{{.Names}} {{.Status}}"' | tr -d '\r' || true)
+    case "$qwen" in
+      *qwen38*) echo "Qwen3.8 容器：$qwen" ;;
+      *docker*API*|*daemon*) echo "Qwen3.8 容器：未运行（Docker Desktop 未启动）" ;;
+      *) echo "Qwen3.8 容器：未运行" ;;
+    esac
     ;;
   *) echo "用法：$0 start|stop|status" >&2; exit 2 ;;
 esac
