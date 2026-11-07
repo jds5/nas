@@ -50,7 +50,7 @@ bash /home/yao/code/nas/comfyui/remote.sh stop
 
 1. 在 GPU 主机浏览器打开 `http://127.0.0.1:8188`，左侧工作流列表选「BFS Head v1.1 - Qwen Image 2.1」。
 2. `image1`：身体图（保留姿势、衣服、背景）；`image2`：头部参考图。
-3. 默认 8 步、`deis_2m` 采样器（来自 RES4LYF 节点）。
+3. 默认 8 步、`deis_2m` 采样器（来自 RES4LYF 节点）。画布上的 “To use res_2m/res_2s/deis_2m, you need res4lyf nodes installed” 是工作流作者的说明卡片，不是报错；RES4LYF 已安装并加载（2026-11-07 经 API 核对：299 个节点，`deis_2m`、`res_2m`、`res_2s` 在采样器列表中）。
 4. 结果：头部、发型、胡须、眼睛颜色来自参考图；头部角度、衣服和背景保留原图。皮肤纹理可能偏锐，BFS 作者建议输出 2K 缓解（未验证）。
 5. LoRA 可换成 `bfs_head_v1.1_alternative_qwen_2.1`，表情迁移更强。
 
